@@ -1,9 +1,15 @@
 app_name = "onerc_vmms_migrate"
 app_title = "onerc_vmms Migrate"
 app_publisher = "Nigel"
-app_description = "One-off migration of volunteers and members from onerc_vmms into vmmsx"
+app_description = "VMMS migration, protected logins, historical records and reconciliation"
 app_email = "nigelnathan2@gmail.com"
 app_license = "mit"
+
+# Everything this app writes is a vmmsx or onerc_core record. It is installed on
+# the target site; retain it while its restricted history archive is needed.
+after_install = "onerc_vmms_migrate.install.after_install"
+after_migrate = "onerc_vmms_migrate.install.after_install"
+required_apps = ["erpnext", "onerc_core", "vmmsx", "buzz"]
 
 # Send non-GET requests for this app's endpoints as native `application/json`
 # bodies instead of form-encoded, per-key JSON-stringified values.
@@ -283,4 +289,3 @@ require_type_annotated_api_methods = True
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

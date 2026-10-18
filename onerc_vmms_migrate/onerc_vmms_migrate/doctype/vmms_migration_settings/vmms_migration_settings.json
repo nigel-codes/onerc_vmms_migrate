@@ -1,0 +1,121 @@
+{
+ "doctype": "DocType",
+ "name": "VMMS Migration Settings",
+ "module": "onerc_vmms Migrate",
+ "issingle": 1,
+ "track_changes": 1,
+ "field_order": [
+  "instructions",
+  "capture_mode",
+  "source_url",
+  "api_key",
+  "api_secret",
+  "preserve_passwords",
+  "restore_email_link_login",
+  "default_country_code",
+  "drop_invalid_phones",
+  "emergency_contact_may_call",
+  "allow_missing_files",
+  "allow_source_exclusions",
+  "browser_capture",
+  "migration_dashboard"
+ ],
+ "fields": [
+  {
+   "fieldname": "instructions",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "capture_mode",
+   "fieldtype": "Select",
+   "label": "Source connection",
+   "options": "REST\nBulk Export",
+   "default": "Bulk Export",
+   "reqd": 1,
+   "description": "Bulk Export connects directly to the VMMS Export companion app on the old v15 site and supports resumable transfers."
+  },
+  {
+   "fieldname": "source_url",
+   "fieldtype": "Data",
+   "label": "Old site URL",
+   "reqd": 1,
+   "description": "HTTPS origin of the old live site. Use a System Manager with unrestricted read access."
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "Old site API key",
+   "reqd": 1
+  },
+  {
+   "fieldname": "api_secret",
+   "fieldtype": "Password",
+   "label": "Old site API secret",
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_country_code",
+   "fieldtype": "Data",
+   "label": "Default country calling code",
+   "default": "254",
+   "reqd": 1
+  },
+  {
+   "fieldname": "drop_invalid_phones",
+   "fieldtype": "Check",
+   "label": "Allow phone numbers requiring review",
+   "description": "Keep the original imported phone in a read-only profile field. If it fails this society\u2019s rules, leave the operational phone blank and report it for review."
+  },
+  {
+   "fieldname": "emergency_contact_may_call",
+   "fieldtype": "Check",
+   "label": "Treat old emergency contacts as permission to call"
+  },
+  {
+   "fieldname": "browser_capture",
+   "fieldtype": "Data",
+   "label": "Captured source",
+   "read_only": 1
+  },
+  {
+   "fieldname": "migration_dashboard",
+   "fieldtype": "HTML"
+  },
+  {
+   "fieldname": "preserve_passwords",
+   "fieldtype": "Check",
+   "label": "Preserve existing passwords",
+   "default": "1",
+   "description": "Bulk Export only. Hosting must register this target\u2019s public key and enable protected login export on the source. Existing hashes transfer encrypted; passwords are never requested."
+  },
+  {
+   "fieldname": "allow_missing_files",
+   "fieldtype": "Check",
+   "label": "Allow reviewed attachment exceptions",
+   "description": "Import available verified files and retain missing-file reports. Missing files are never replaced with unrelated bytes."
+  },
+  {
+   "fieldname": "allow_source_exclusions",
+   "fieldtype": "Check",
+   "label": "Allow reviewed source identity exceptions (maximum 1%)",
+   "default": "0",
+   "description": "Review all source-exclusion reports first. Allows up to 1% of people and separately up to 1% of accounts to remain in restricted history when their source identity cannot be migrated safely. Runtime import failures still block cutover."
+  },
+  {
+   "fieldname": "restore_email_link_login",
+   "fieldtype": "Check",
+   "label": "Preserve source email-link sign-in",
+   "default": "1",
+   "description": "When the source uses email-link login, preserve that sign-in route for accounts without a local password. Existing destination MFA is never disabled. Configure and test destination email delivery before cutover."
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "engine": "InnoDB"
+}

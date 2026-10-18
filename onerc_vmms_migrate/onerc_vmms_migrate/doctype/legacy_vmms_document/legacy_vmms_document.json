@@ -1,0 +1,141 @@
+{
+ "doctype": "DocType",
+ "name": "Legacy VMMS Document",
+ "module": "onerc_vmms Migrate",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "fields": [
+  {
+   "fieldname": "source_id",
+   "fieldtype": "Data",
+   "label": "Source Site Identity",
+   "read_only": 1
+  },
+  {
+   "fieldname": "record_id",
+   "fieldtype": "Data",
+   "label": "Source Record Identity",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Data",
+   "label": "Old DocType",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "label": "Old Record",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Capture",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_hash",
+   "fieldtype": "Data",
+   "label": "Record SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_payload",
+   "fieldtype": "Code",
+   "label": "Original Record (JSON)",
+   "read_only": 1,
+   "options": "JSON"
+  },
+  {
+   "fieldname": "legacy_parenttype",
+   "fieldtype": "Data",
+   "label": "Old Parent Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "legacy_parent",
+   "fieldtype": "Data",
+   "label": "Old Parent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "legacy_parentfield",
+   "fieldtype": "Data",
+   "label": "Old Parent Field",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conversion_status",
+   "fieldtype": "Select",
+   "label": "Conversion",
+   "read_only": 1,
+   "options": "Retained\nConverted",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Link",
+   "label": "New DocType",
+   "read_only": 1,
+   "options": "DocType"
+  },
+  {
+   "fieldname": "target_name",
+   "fieldtype": "Dynamic Link",
+   "label": "New Record",
+   "read_only": 1,
+   "options": "target_doctype"
+  },
+  {
+   "fieldname": "run_id",
+   "fieldtype": "Data",
+   "label": "Migration Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "imported_on",
+   "fieldtype": "Datetime",
+   "label": "Imported On",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "source_id",
+  "record_id",
+  "source_doctype",
+  "source_name",
+  "snapshot_id",
+  "source_hash",
+  "source_payload",
+  "legacy_parenttype",
+  "legacy_parent",
+  "legacy_parentfield",
+  "conversion_status",
+  "target_doctype",
+  "target_name",
+  "run_id",
+  "imported_on"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "track_changes": 0,
+ "sort_field": "imported_on",
+ "sort_order": "DESC"
+}

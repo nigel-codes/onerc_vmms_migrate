@@ -34,6 +34,9 @@ def insert(doctype, values, name=None):
     else:
         from frappe.model.naming import set_new_name
         set_new_name(doc)
+    # Child rows were attached while the parent had no final name yet.
+    # Populate the native parent links before mandatory/link validation.
+    doc.set_parent_in_children()
     if frappe.db.exists(doctype, doc.name):
         raise ValueError(f'{doctype} already contains this record; resolve the collision before importing.')
     doc.owner = 'Administrator'

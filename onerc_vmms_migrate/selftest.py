@@ -108,6 +108,16 @@ def _geo_chain() -> tuple[str, str]:
 def _exercise(expect) -> None:
 	outbox = frappe.db.count("Email Queue")
 	volunteer_node, membership_node = _geo_chain()
+	from onerc_vmms_migrate.historical import insert as historical_insert
+	tor = historical_insert("VMMS Terms of Reference", {
+		"tor_name": "Synthetic historical child validation",
+		"tor_key": "selftest-children-" + frappe.generate_hash(length=10),
+		"geo_scope": volunteer_node, "approval_mode": "direct",
+		"objectives": [{"objective": "Recorded synthetic objective"}],
+	})
+	expect("historical child rows retain their parent before native validation",
+		(tor.objectives[0].parent, tor.objectives[0].parenttype, tor.objectives[0].parentfield),
+		(tor.name, tor.doctype, "objectives"))
 
 	for key, lifetime, days in (("selftest-annual", 0, 365), ("selftest-life", 1, 0)):
 		frappe.get_doc(

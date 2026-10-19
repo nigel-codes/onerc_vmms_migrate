@@ -18,6 +18,32 @@ from onerc_vmms_migrate.history_load import BatchBoundary, Loader
 
 
 class TestBatchCheckpoint(TestCase):
+	def test_preflight_blocks_missing_lookup_targets_but_allows_reported_residence_fallbacks(self):
+		from onerc_vmms_migrate import run
+		from onerc_vmms_migrate.crosswalk import Crosswalks
+
+		cw = MagicMock()
+		cw.problems.return_value = [
+			{
+				"kind": "profession",
+				"source_value": "Counsellor",
+				"problem": "target 'Counsellor' does not exist on this site",
+			},
+			{"kind": "residence", "source_value": "ward:Legacy", "problem": "unmapped"},
+		]
+		with (
+			patch.object(batches, "build", return_value={"bundles": []}) as build,
+			patch.object(Crosswalks, "read", return_value=cw),
+			patch.object(run, "_report_plan", return_value={}),
+		):
+			_, _, failures, summary = batches.work(
+				{}, None, {}, {"phase": "preflight", "offset": 0, "batch_size": 1000, "run_id": "test"}, None
+			)
+		self.assertEqual(len(failures), 1)
+		self.assertEqual(failures[0]["kind"], "profession")
+		self.assertEqual(summary["missing_reference_targets"], 1)
+		self.assertIs(build.call_args.kwargs["crosswalks"], cw)
+
 	def test_preflight_finds_native_phone_failures_before_loading_records(self):
 		from onerc_vmms_migrate import run
 		from onerc_vmms_migrate.crosswalk import Crosswalks

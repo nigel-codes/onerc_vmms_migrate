@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-19
+
+- Stop batch preflight before loading when a mapped lookup target is missing.
+  Preserve the crosswalk usage collected during planning so missing targets
+  appear in reports. Recheck them during final verification. Reviewed residence
+  fallbacks remain warnings.
+
 ## 0.3.0 — 2026-10-19
 
 - Add persistent test imports in resumable batches of up to 1,000 records, with

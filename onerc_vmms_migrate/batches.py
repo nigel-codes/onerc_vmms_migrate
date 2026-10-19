@@ -109,11 +109,20 @@ def archive_page(snapshot, start, size):
 	return result
 
 
-def build(snapshot, conf):
+def build(snapshot, conf, crosswalks=None):
 	from onerc_vmms_migrate import transform
 	from onerc_vmms_migrate.crosswalk import Crosswalks
 
-	return transform.build(snapshot, Crosswalks.read(), conf, datetime.date.fromisoformat(today()))
+	return transform.build(
+		snapshot,
+		crosswalks if crosswalks is not None else Crosswalks.read(),
+		conf,
+		datetime.date.fromisoformat(today()),
+	)
+
+
+def reference_failures(crosswalks):
+	return [{**row, "error": row["problem"]} for row in crosswalks.problems() if row["problem"] != "unmapped"]
 
 
 def excluded_identities(snapshot, built):
@@ -223,8 +232,9 @@ def work(snapshot, source, conf, value, progress):
 		from onerc_vmms_migrate import run
 		from onerc_vmms_migrate.crosswalk import Crosswalks
 
-		built = build(snapshot, conf)
-		summary = run._report_plan(value["run_id"], Crosswalks.read(), built)
+		cw = Crosswalks.read()
+		built = build(snapshot, conf, crosswalks=cw)
+		summary = run._report_plan(value["run_id"], cw, built)
 		invalid = [
 			{
 				"person": bundle["key"],
@@ -235,7 +245,10 @@ def work(snapshot, source, conf, value, progress):
 			and bundle["profile"].get("phone")
 			and not frappe.utils.validate_phone_number(bundle["profile"]["phone"])
 		]
-		failures = invalid if not conf.get("drop_invalid_phones") else []
+		failures = reference_failures(cw)
+		summary["missing_reference_targets"] = len(failures)
+		if not conf.get("drop_invalid_phones"):
+			failures.extend(invalid)
 		summary["native_phones_requiring_review"] = len(invalid)
 		return 1, 1, failures, summary
 	if phase == "archive":
@@ -318,8 +331,10 @@ def verify(snapshot, conf, value):
 	from onerc_vmms_migrate.policy import source_exclusions_accepted
 
 	summary, failures = full_reconcile.verify(snapshot)
-	built = build(snapshot, conf)
-	run._report_plan(value["run_id"], Crosswalks.read(), built)
+	cw = Crosswalks.read()
+	built = build(snapshot, conf, crosswalks=cw)
+	run._report_plan(value["run_id"], cw, built)
+	failures.extend(reference_failures(cw))
 	if not any(not bundle["errors"] for bundle in built["bundles"]):
 		failures.append({"problem": "There are no ready people to verify"})
 	rejected = sum(bool(bundle["errors"]) for bundle in built["bundles"])

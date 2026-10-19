@@ -1,4 +1,4 @@
-# VMMS migration receiver — 0.3.0
+# VMMS migration receiver — 0.3.1
 
 Install on the **new Redhive site**, alongside `erpnext`, `onerc_core`, `vmmsx` and `buzz`.
 Install companion `onerc_vmms_export` on the **old v15 VMMS site**.
@@ -19,7 +19,8 @@ For a persistent test on a disposable destination:
 2. In **VMMS Migration Settings → 3. Validate → Start batch test**, choose 1,000
    records, confirm the target backup and disposable test destination, and type
    `TEST`. The worker pauses the scheduler and mutes email before loading.
-3. A preflight plan first reports phone values that Frappe would reject, before
+3. A preflight plan first reports missing mapped lookup targets and phone values
+   that Frappe would reject, before
    retaining or importing the full dataset. Strict mode stops for review; it does
    not silently discard phone values.
    Each job handles **up to** 1,000 records. Accounts, people and operational

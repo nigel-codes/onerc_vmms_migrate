@@ -46,6 +46,12 @@ class SQLiteHistory(Mapping):
             for row in db.execute("SELECT payload FROM records WHERE dataset='history' ORDER BY record_key"):
                 yield json.loads(row[0])
 
+    def page(self,start,size):
+        with self.connect() as db:
+            return [json.loads(row[0]) for row in db.execute(
+                "SELECT payload FROM records WHERE dataset='history' ORDER BY record_key LIMIT ? OFFSET ?",
+                (int(size),int(start)))]
+
     def rows(self,doctype):
         with self.connect() as db:
             for row in db.execute("SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' WHERE i.doctype=? ORDER BY i.name",(doctype,)):

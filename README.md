@@ -1,10 +1,73 @@
-# VMMS migration receiver — 0.2.0
+# VMMS migration receiver — 0.3.0
 
 Install on the **new Redhive site**, alongside `erpnext`, `onerc_core`, `vmmsx` and `buzz`.
 Install companion `onerc_vmms_export` on the **old v15 VMMS site**.
 The new site initiates authenticated, manually started server-to-server transfers.
 No database backup or files archive needs to pass through the operator's computer.
 Both sites need a long worker, Redis and sufficient private storage.
+
+## Resumable batches (0.3.0)
+
+Upgrade the **receiver on the destination**, run `bench --site NEW migrate`,
+then build/reload its assets. The exporter does not need an update for this
+feature. Let the previous migration job finish/fail before deploying; a worker
+restart can interrupt an active job. Preserve the captured snapshot and keys.
+
+For a persistent test on a disposable destination:
+
+1. Prepare references, review mappings and run the plan/self-test as usual.
+2. In **VMMS Migration Settings → 3. Validate → Start batch test**, choose 1,000
+   records, confirm the target backup and disposable test destination, and type
+   `TEST`. The worker pauses the scheduler and mutes email before loading.
+3. A preflight plan first reports phone values that Frappe would reject, before
+   retaining or importing the full dataset. Strict mode stops for review; it does
+   not silently discard phone values.
+   Each job handles **up to** 1,000 records. Accounts, people and operational
+   history also yield after about four minutes, before beginning another record.
+   A slow individual record can still cause that one job to time out; the next
+   attempt resumes its saved checkpoint. There is no completion-time guarantee.
+4. The server automatically queues the next batch after each commit. You can
+   close the browser or turn off the computer. Progress shows the current phase,
+   committed batch count, completed records in that phase and its total when
+   known. Operational history follows dependency order; its final total is not
+   guessed while adapters are still running.
+5. On validation errors, sequencing stops and a private `batch-…-failures.csv`
+   identifies the failed records. Successful records from that batch remain;
+   **Resume / retry batches** revisits the same range using the migration ledger
+   and conversion index, so those successes are reused. Unexpected exceptions
+   and timeouts roll back the entire current uncommitted batch.
+6. **Pause batches** takes effect after the current batch commits. Fix missing
+   references/target configuration, then resume. Code/settings/mapping changes
+   require explicit review to resume a **test** session and are recorded in its
+   reports. A different capture is always refused. Existing committed person
+   values are not overwritten to match new mappings; reconciliation exposes
+   those differences for review. Live import inputs cannot change midway.
+7. Final verification checks retained source versions and native links, password
+   continuity, people fields in batches, source-exclusion limits and reviewed
+   attachment exceptions. A private `batch-session.json` contains the result.
+
+**A batch test is persistent, not a rollback rehearsal.** It creates accounts,
+Red Profiles, native affiliations, memberships and history on the test target.
+It verifies captured attachment bytes without installing real attachment files.
+Do not open this destination to users. Its records remain after testing; restore
+its backup or rebuild the test site afterwards. Keep the source capture, reports,
+receiver private key and site encryption key before any site rebuild.
+
+Batch tests do **not** set the successful-full-rehearsal authorization or permit
+live cutover. The existing rollback rehearsal remains available, and its
+approval requirements remain enforced. Once a live import is authorized, the
+**Import captured data** dialog now defaults to batches of 1,000 too. It retains
+all backup, source-freeze, exclusion, attachment and login-delivery gates, copies
+actual attachment files and applies the login policy only after final checks.
+Finish cutover remains blocked until successful verification. Restoring services
+never undoes committed records.
+
+Checkpoint storage is a restricted InnoDB singleton separate from the settings
+form. Every record batch and its checkpoint commit in the **same transaction**.
+Redis is only the exclusive job lock/pause control; private JSON files are reports,
+not recovery authority. A positively failed/finished RQ job can be unlocked by
+Resume; queued/running/unknown jobs are never stopped or assumed dead. There is
+one session per destination; trial sessions cannot be promoted into live imports.
 
 ## Data and account behavior
 

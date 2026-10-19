@@ -1,0 +1,25 @@
+{
+ "doctype": "DocType",
+ "name": "VMMS Migration Batch State",
+ "module": "onerc_vmms Migrate",
+ "issingle": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "checkpoint"
+ ],
+ "fields": [
+  {
+   "fieldname": "checkpoint",
+   "fieldtype": "Long Text",
+   "label": "Committed checkpoint",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ]
+}

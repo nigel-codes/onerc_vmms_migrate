@@ -5,6 +5,7 @@ automation. Unresolvable dependencies are reported per record and retained;
 they never become fabricated approvals, attendance, payments or contracts.
 """
 import datetime
+import time
 from collections import Counter
 
 import frappe
@@ -12,6 +13,10 @@ import frappe
 from onerc_vmms_migrate import historical, normalise
 from onerc_vmms_migrate.crosswalk import Crosswalks, UNMAPPED, DROP
 from onerc_vmms_migrate.history_model import History, assignment_state, application_state, key, split_name
+
+
+class BatchBoundary(Exception):
+    """Stop before the next record without rolling back completed records."""
 
 
 class SourceIdentityExcluded(ValueError):
@@ -58,11 +63,20 @@ class Loader:
         if (source_dt,row['name']) in self.excluded_identities:
             self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':'Source identity requires review; original record retained'})
             return None
-        old=historical.converted(self.snapshot,source_dt,row['name'])
+        batched = getattr(self, 'batch_limit', None) is not None
+        identity = (source_dt, str(row['name']))
+        old = self.converted_index.get(identity) if batched else historical.converted(self.snapshot,source_dt,row['name'])
         if old:
             self.targets[(source_dt,row['name'])]=old
             self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':old,'outcome':'existing'})
             return old
+        if batched:
+            if self.batch_attempted >= self.batch_limit or (self.batch_attempted and time.monotonic() >= self.batch_deadline):
+                raise BatchBoundary()
+            self.batch_attempted += 1
+            if self.batch_progress and self.batch_attempted % 25 == 0:
+                self.batch_progress({'phase':'history','processed':len(self.results),
+                                     'loaded':self.batch_attempted,'failed':len(self.failures)})
         frappe.db.savepoint('vmms_history_record')
         try:
             values=build(row)
@@ -70,6 +84,8 @@ class Loader:
             values.setdefault('modified',row.get('modified'))
             doc=historical.insert(target_dt,values,name=name)
             historical.mark(self.snapshot,source_dt,row['name'],target_dt,doc.name,self.run_id)
+            if batched:
+                self.converted_index[identity] = doc.name
             self.targets[(source_dt,row['name'])]=doc.name
             self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':doc.name,'outcome':'created'})
             return doc.name
@@ -304,6 +320,8 @@ class Loader:
             if not row.get('is_volunteer'):continue
             existing=self.by_source.get(('Job Applicant',row['name'],'VMMS Volunteer Application'))
             if existing:
+                if getattr(self,'batch_limit',None) is not None and ('Job Applicant',str(row['name'])) in self.converted_index:
+                    continue
                 historical.mark(self.snapshot,'Job Applicant',row['name'],'VMMS Volunteer Application',existing,self.run_id)
                 continue
             def build(r):
@@ -392,6 +410,33 @@ class Loader:
                 'run_id':self.run_id,'phase':method.__name__,'converted':len(self.results),
                 'failures':self.failures,'exclusions':self.excluded,'warnings':self.warnings})
         return {'converted':len(self.results),'failed':len(self.failures),
+            'by_source':dict(Counter(r['source_doctype'] for r in self.results)),
+            'failures':self.failures,'records':self.results,'excluded_count':len(self.excluded),
+            'excluded_by_source':dict(Counter(r['source_doctype'] for r in self.excluded)),
+            'exclusions':self.excluded,'warnings':self.warnings}
+
+
+    def run_batch(self, limit, deadline, progress=None):
+        """Replay dependency order using the committed conversion index.
+
+        Existing identities do not consume the batch allowance. A boundary is
+        checked before inserting the next new record; genuine exceptions still
+        escape and roll back the batch. No cursor depends on changing Task order.
+        """
+        self.batch_limit, self.batch_deadline = limit, deadline
+        self.batch_attempted, self.batch_progress = 0, progress
+        source_id = str(self.snapshot['source'].get('source_id') or self.snapshot['source']['db_name'])
+        rows = frappe.get_all(historical.ARCHIVE, filters={'source_id':source_id,'conversion_status':'Converted'},
+                              fields=['source_doctype','source_name','target_name'])
+        self.converted_index = {(r.source_doctype,str(r.source_name)):r.target_name for r in rows}
+        complete = True
+        try:
+            for method in (self.projects,self.terms,self.deployments,self.events,self.applications,self.availability,self.time_logs):
+                method()
+        except BatchBoundary:
+            complete = False
+        return {'converted':len(self.results),'failed':len(self.failures),
+            'attempted':self.batch_attempted,'complete':complete,
             'by_source':dict(Counter(r['source_doctype'] for r in self.results)),
             'failures':self.failures,'records':self.results,'excluded_count':len(self.excluded),
             'excluded_by_source':dict(Counter(r['source_doctype'] for r in self.excluded)),

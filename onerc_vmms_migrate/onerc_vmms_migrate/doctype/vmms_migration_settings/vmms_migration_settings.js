@@ -13,7 +13,7 @@ frappe.ui.form.on('VMMS Migration Settings', {
   </div>`);
   const start = async (action, extra = {}) => {
    if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
-   await frappe.call({method: migration_api + 'start', args: {action, ...extra}});
+   await migration_json(migration_api + 'start', {action, ...extra});
    migration_status(frm);
   };
   const add = (label, action, group) => frm.add_custom_button(__(label), () => start(action), __(group));
@@ -42,11 +42,38 @@ frappe.ui.form.on('VMMS Migration Settings', {
   frm.add_custom_button(__('Edit mappings'), () => mapping_dialog(frm), __('2. Review'));
   add('Plan migration', 'plan', '3. Validate');
   add('Rehearse full import', 'rehearsal', '3. Validate');
+  frm.add_custom_button(__('Start batch test'), () => {
+   const dialog = new frappe.ui.Dialog({title: __('Test migration in resumable batches'), fields: [
+    {fieldtype: 'HTML', options: '<p><strong>Use a test destination.</strong> This creates and KEEPS destination accounts, Red Profiles, affiliations and history between batches. It pauses the scheduler and mutes email. It does not copy attachment bytes or authorize live cutover. Restore your backup or rebuild this test site when finished.</p><p>Each job handles up to the selected number of records, saves its checkpoint, then queues the next job. Validation failures pause the sequence for review.</p>'},
+    {fieldname: 'test_destination', fieldtype: 'Check', label: __('This is a disposable test destination'), reqd: 1},
+    {fieldname: 'backup_confirmed', fieldtype: 'Check', label: __('I have a current database and files backup'), reqd: 1},
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Records per batch (1–1000)'), default: 1000, reqd: 1},
+    {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type TEST to keep test records between batches'), reqd: 1}
+   ], primary_action_label: __('Start batch test'), primary_action: async values => {
+    await start('batch_test', values); dialog.hide();
+   }}); dialog.show();
+  }, __('3. Validate'));
+  frm.add_custom_button(__('Pause batches'), async () => {
+   const data = await migration_json('onerc_vmms_migrate.batch_browser.pause');
+   frappe.show_alert({message: data.message, indicator: 'orange'}); migration_status(frm);
+  }, __('3. Validate'));
+  frm.add_custom_button(__('Resume / retry batches'), () => {
+   const dialog = new frappe.ui.Dialog({title: __('Resume saved batch checkpoint'), fields: [
+    {fieldtype: 'HTML', options: '<p>Completed batches remain in the destination. The last unfinished batch is retried using the migration ledger to avoid duplicates. Fix the reported errors first. A running job will not be interrupted.</p>'},
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Records per batch (1–1000)'), default: 1000, reqd: 1},
+    {fieldname: 'accept_changes', fieldtype: 'Check', label: __('Test only: I reviewed code/settings/mapping changes since the previous batch'), description: __('A changed capture is always refused. Existing migrated values are never silently overwritten. Live imports must keep their original inputs.')}
+   ], primary_action_label: __('Resume'), primary_action: async values => {
+    if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+    await migration_json('onerc_vmms_migrate.batch_browser.resume', values);
+    dialog.hide(); migration_status(frm);
+   }}); dialog.show();
+  }, __('3. Validate'));
   frm.add_custom_button(__('Import captured data'), async () => {
    const {message: state} = await frappe.call({method: migration_api + 'status'});
    const needs_email_test = !!state.rehearsal?.authentication_policy?.mail_delivery_test_required;
    const dialog = new frappe.ui.Dialog({title: __('Import captured data'), fields: [
     {fieldtype: 'HTML', options: '<p>The import creates live records. It pauses scheduled jobs and mutes email on this target until you finish cutover. Review all plan and rehearsal reports first. Recovery requires restoring your target backup.</p>'},
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Records per batch (1–1000)'), default: 1000, reqd: 1},
     {fieldname: 'backup_confirmed', fieldtype: 'Check', label: __('I have a current target database and files backup'), reqd: 1},
     {fieldname: 'source_frozen', fieldtype: 'Check', label: __('The old site was frozen before the selected capture and remains frozen'), reqd: 1},
     {fieldname: 'exclusions_reviewed', fieldtype: 'Check', label: __('I reviewed excluded records, warnings and login transfer results'), reqd: 1},
@@ -89,6 +116,12 @@ async function migration_status(frm) {
  if (state.pending_bulk_capture && !state.busy) html += '<p>A bulk transfer can be resumed using Capture / resume old site.</p>';
  if (state.result?.complete === false) html += '<div class="alert alert-warning">The source snapshot has missing attachments. Review the missing-files report before importing.</div>';
  if (state.error) html += `<div class="alert alert-danger">${escape(state.error)}</div>`;
+ if (state.batch) {
+  const batch = state.batch;
+  html += `<div class="alert alert-info"><strong>${batch.mode === 'test' ? __('Persistent batch test') : __('Batched import')}</strong><br>${escape(batch.phase)} · ${escape(batch.status)} · ${__('Committed batches')}: ${escape(batch.batch_number)}<br>${__('Completed in this phase')}: ${escape(batch.offset)}${batch.total != null ? ' / ' + escape(batch.total) : ''}<br>${__('Maximum records per job')}: ${escape(batch.batch_size)}</div>`;
+  if (batch.status === 'blocked') html += '<p>Automatic batches stopped. Review the latest batch failure report, fix the cause, then use Resume / retry batches. Earlier committed batches remain intact.</p>';
+  if (batch.mode === 'test' && batch.status === 'finished') html += '<p>Batch testing finished. Its records remain on this test site. This result does not authorize a live import.</p>';
+ }
  if (state.cutover) html += '<div class="alert alert-warning">Cutover is active: scheduled jobs are paused and email is muted. Reconcile, then use Finish cutover to restore the original settings.</div>';
  if (state.result) html += `<pre style="max-height:360px;overflow:auto">${escape(JSON.stringify(state.result, null, 2))}</pre>`;
  if (state.rehearsal) html += `<p>Last full rehearsal: ${state.rehearsal.passed ? 'passed' : 'needs attention'}. Changes to the capture, mappings or settings require another rehearsal.</p>`;
@@ -105,7 +138,7 @@ async function migration_status(frm) {
   html += '</ul>';
  }
  frm.get_field('migration_dashboard').$wrapper.html(html);
- if (state.busy) frm._migration_timer = setTimeout(() => {
+ if (state.busy || state.batch?.status === 'ready') frm._migration_timer = setTimeout(() => {
   if (cur_frm === frm) migration_status(frm);
  }, 4000);
  else if (state.action === 'capture' && state.status === 'finished' && state.result?.capture_id !== frm.doc.browser_capture) frm.reload_doc();
@@ -139,8 +172,26 @@ function mapping_dialog(frm) {
     }}); pick.show();
    }}
   ], primary_action_label: __('Save mappings'), primary_action: async () => {
-   await frappe.call({method: migration_api + 'save_mappings', args: {kind, rows: dialog.fields_dict.rows.df.data}});
+   await migration_json(migration_api + 'save_mappings', {kind, rows: dialog.fields_dict.rows.df.data});
    dialog.hide(); frappe.show_alert({message: __('Mappings saved. Run the plan and rehearsal again.'), indicator: 'green'});
   }}); dialog.show();
  }}); chooser.show();
+}
+
+
+async function migration_json(method, args = {}) {
+ const response = await fetch('/api/method/' + method, {
+  method: 'POST', credentials: 'same-origin',
+  headers: {'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': frappe.csrf_token},
+  body: JSON.stringify(args)
+ });
+ const data = await response.json();
+ if (!response.ok || data.exc || data.exc_type) {
+  let messages = [];
+  try { messages = JSON.parse(data._server_messages || '[]').map(value => typeof value === 'string' ? JSON.parse(value).message : value.message); } catch {}
+  const message = messages.join(' | ').replace(/<[^>]*>/g, '') || data.exc_type || 'HTTP ' + response.status;
+  frappe.msgprint({title: __('Migration stopped'), message: frappe.utils.escape_html(message), indicator: 'red'});
+  throw new Error(message);
+ }
+ return data.message;
 }

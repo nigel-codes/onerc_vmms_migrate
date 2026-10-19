@@ -5,13 +5,18 @@ import frappe
 
 from onerc_vmms_migrate import load, normalise, workspace
 from onerc_vmms_migrate.history_model import canonical
+from onerc_vmms_migrate.silence import SilenceBreached
 
 
-def transfer(snapshot, conf, run_id, progress=None):
+def transfer(snapshot, conf, run_id, progress=None, stop=None):
     result = {'loaded': 0, 'existing': 0, 'failed': [], 'without_password': 0,
               'roles_requiring_review': [], 'excluded': [], 'total': len(snapshot['users'])}
     workspace.write_json(workspace.path('account-failures-in-progress.json'),[])
+    processed = 0
     for index, row in enumerate(snapshot['users'].values(), 1):
+        if processed and stop and stop():
+            break
+        processed += 1
         email = normalise.email(row.get('email')) or normalise.email(row['name'])
         if row['name'] in ('Administrator','Guest'):
             continue
@@ -46,6 +51,8 @@ def transfer(snapshot, conf, run_id, progress=None):
                     'target_name':target,'outcome':'adopted' if existed else 'created',
                     'source_hash':hashlib.sha256(canonical(row).encode()).hexdigest(),
                     'run_id':run_id}).insert(ignore_permissions=True)
+        except SilenceBreached:
+            raise
         except Exception as exc:
             frappe.db.rollback(save_point='vmms_account')
             frappe.clear_messages()
@@ -55,4 +62,6 @@ def transfer(snapshot, conf, run_id, progress=None):
             workspace.write_json(workspace.path('account-failures-in-progress.json'),result['failed'])
         if progress and index % 100 == 0:
             progress({'phase':'accounts','processed':index,'total':result['total'],'loaded':result['loaded'],'existing':result['existing'],'failed':len(result['failed'])})
+    if stop is not None:
+        result['processed'] = processed
     return result

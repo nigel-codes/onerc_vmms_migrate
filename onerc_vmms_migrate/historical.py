@@ -80,7 +80,7 @@ def archive_id(source_id, doctype, name):
     return hashlib.sha256((source_id + '\0' + doctype + '\0' + name).encode()).hexdigest()
 
 
-def archive(snapshot, run_id):
+def archive(snapshot, run_id, records=None):
     """Retain every captured row, including fields without an operational home.
 
     This is retention, counted separately from native conversion in all reports.
@@ -89,34 +89,40 @@ def archive(snapshot, run_id):
     """
     source_id = str(snapshot['source'].get('source_id') or snapshot['source']['db_name'])
     created = reused = 0
-    existing=set(frappe.get_all(ARCHIVE,pluck='name'))
     pending=[]
     columns=['name','creation','modified','owner','modified_by','docstatus','idx','source_id','record_id',
         'source_doctype','source_name','snapshot_id','source_hash','source_payload','run_id','conversion_status',
         'imported_on','legacy_parenttype','legacy_parent','legacy_parentfield']
     imported_on=now_datetime()
     from itertools import chain
-    records = chain(snapshot.get('history', {}).values(), ({'doctype':'User','record':u} for u in snapshot.get('users',{}).values()))
-    total=len(snapshot.get('history',{}))+len(snapshot.get('users',{}))
+    if records is None:
+        records = chain(snapshot.get('history', {}).values(), ({'doctype':'User','record':u} for u in snapshot.get('users',{}).values()))
+    total = 0
+    def flush():
+        nonlocal reused, created
+        names = [row[0] for row in pending]
+        found = set(frappe.get_all(ARCHIVE, filters={'name':['in',names]}, pluck='name'))
+        fresh = [row for row in pending if row[0] not in found]
+        reused += len(pending)-len(fresh)
+        created += len(fresh)
+        if fresh:
+            frappe.db.bulk_insert(ARCHIVE,columns,fresh)
     # Users use the safe person allowlist. No authentication or API secrets.
     for item in records:
+        total += 1
         dt, row = item['doctype'], item['record']
         payload = canonical(row)
         digest = hashlib.sha256(payload.encode()).hexdigest()
         record_id = archive_id(source_id, dt, row['name'])
         name = hashlib.sha256((record_id + digest).encode()).hexdigest()
-        if name in existing:
-            reused += 1
-            continue
         pending.append((name,imported_on,imported_on,'Administrator','Administrator',0,0,
             source_id,record_id,dt,str(row['name']),
             snapshot['source'].get('capture_id') or snapshot['source'].get('snapshot_id'),
             digest,payload,run_id,'Retained',imported_on,row.get('parenttype'),row.get('parent'),row.get('parentfield')))
-        created += 1
         if len(pending)>=1000:
-            frappe.db.bulk_insert(ARCHIVE,columns,pending)
+            flush()
             pending=[]
-    if pending:frappe.db.bulk_insert(ARCHIVE,columns,pending)
+    if pending:flush()
     return {'created': created, 'reused': reused, 'total': total}
 
 

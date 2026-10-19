@@ -23,6 +23,8 @@ class TestHistoryStorage(TestCase):
             store=SQLiteHistory(path,3)
             self.assertEqual(len(store),3)
             self.assertEqual(list(store.values()),rows)
+            self.assertEqual(store.page(1,1),rows[1:2])
+            self.assertEqual(store.page(3,1000),[])
             self.assertEqual(store['0'],rows[0])
             with self.assertRaises(KeyError):store['not-present']
             history=History({'history':store,'schemas':{'Parent':{},'Child':{}}})

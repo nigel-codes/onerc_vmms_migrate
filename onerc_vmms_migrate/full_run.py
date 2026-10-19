@@ -178,7 +178,7 @@ def coverage(snapshot):
     return result
 
 
-def attachments(snapshot,source,run_id,dry_run=True):
+def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
     """Restore bytes and rewrite native attachment fields, preserving ownership."""
     from onerc_vmms_migrate.bulk_source import sha256_file
     from onerc_vmms_migrate.history_model import History
@@ -205,7 +205,7 @@ def attachments(snapshot,source,run_id,dry_run=True):
         cache[identity]=new_url
         report['restored']+=1
         return new_url
-    for item in manifest.values():
+    for item in manifest.values() if verify_manifest else ():
         url=item['source_url']
         path=source.file_path(url)
         if not path:

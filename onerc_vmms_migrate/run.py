@@ -388,16 +388,18 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 # --- reconcile ----------------------------------------------------------------
 
 
-def reconcile():
+def reconcile(bundles=None):
 	"""Compare every migrated person with what the old site says today."""
 	run_id = _run_id("reconcile")
 	out = workspace.report_dir(run_id)
 
-	with Source() as source:
-		_snapshot, _cw, result = _build(source)
+	if bundles is None:
+		with Source() as source:
+			_snapshot, _cw, result = _build(source)
+		bundles = result["bundles"]
 
 	mismatches, checked = [], 0
-	for b in result["bundles"]:
+	for b in bundles:
 		rows = frappe.get_all(
 			loader.LEDGER,
 			filters={"person_key": b["key"]},

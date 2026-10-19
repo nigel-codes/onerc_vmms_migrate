@@ -22,6 +22,7 @@ ACTIONS = {
 	"crosswalks",
 	"plan",
 	"rehearsal",
+	"batch_test",
 	"import",
 	"reconcile",
 }
@@ -45,6 +46,10 @@ def lock_key():
 
 
 def assert_idle():
+	from onerc_vmms_migrate.batches import checkpoint
+	batch = checkpoint()
+	if batch and batch["status"] == "ready":
+		frappe.throw("Pause the batch session before changing migration inputs.")
 	if frappe.cache.get(lock_key()):
 		frappe.throw("A migration job is queued or running. Wait for it to finish before making changes.")
 
@@ -85,6 +90,10 @@ def status() -> dict:
 	authorize()
 	value = state()
 	value["busy"] = bool(frappe.cache.get(lock_key()))
+	from onerc_vmms_migrate.batches import checkpoint, public_state
+	batch = checkpoint()
+	if batch:
+		value["batch"] = public_state(batch)
 	value["reports"] = []
 	reports = workspace.path("reports", "placeholder")
 	reports = os.path.dirname(reports)
@@ -95,7 +104,7 @@ def status() -> dict:
 				value["reports"].append(
 					{
 						"run": run,
-						"files": sorted(f for f in os.listdir(directory) if f.endswith((".csv", ".json"))),
+						"files": sorted(f for f in os.listdir(directory) if f.endswith((".csv", ".json")))[-100:],
 					}
 				)
 	return value
@@ -110,6 +119,8 @@ def start(
 	exclusions_reviewed: bool = False,
 	email_login_confirmed: bool = False,
 	resume_capture_id: str = "",
+	batch_size: int = 0,
+	test_destination: bool = False,
 ) -> dict:
 	authorize()
 	if action not in ACTIONS:
@@ -130,6 +141,17 @@ def start(
 			frappe.throw("Test destination email-link sign-in delivery and confirm it before importing. The source uses this login method.")
 		if confirmation != "LOAD" or not all((backup_confirmed, source_frozen, exclusions_reviewed)):
 			frappe.throw("Confirm LOAD, the target backup, source freeze, and review of excluded records.")
+	from onerc_vmms_migrate import batches, batch_browser
+	existing_batch = batches.checkpoint()
+	if existing_batch and action not in ("check", "selftest", "profile", "plan", "reconcile"):
+		frappe.throw("A batch session already exists. Use its Pause/Resume controls; trial records cannot be promoted to a live import.")
+	if action == "batch_test" or (action == "import" and batch_size):
+		if action == "batch_test" and (confirmation != "TEST" or not test_destination or not backup_confirmed):
+			frappe.throw("Confirm TEST, a disposable test destination, and a current backup. Test batches retain destination records.")
+		size = batches.validate_size(batch_size or 1000)
+		batch_browser.assert_job_idle()
+		frappe.cache.delete(batch_browser.pause_key())
+		return batch_browser.queue(action, frappe.session.user, size)
 	token = uuid.uuid4().hex
 	if not frappe.cache.set(lock_key(), token, nx=True, ex=21600):
 		frappe.throw("A migration job is already queued or running.")
@@ -340,6 +362,9 @@ def finish_cutover(confirmation: str = "") -> None:
 def clear_capture() -> None:
 	authorize()
 	assert_idle()
+	from onerc_vmms_migrate.batches import checkpoint
+	if checkpoint():
+		frappe.throw("The capture belongs to a batch session. Preserve it for recovery; restore the target backup or use a fresh target for another capture.")
 	if frappe.db.count("Legacy Migration Record"):
 		frappe.throw("A capture cannot be replaced after records have been migrated.")
 	frappe.db.set_single_value(SETTINGS, "browser_capture", "")

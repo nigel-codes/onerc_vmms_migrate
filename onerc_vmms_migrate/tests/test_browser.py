@@ -164,6 +164,30 @@ class TestBrowserControls(TestCase):
 					browser.start("import", *args)
 
 
+class TestCaptureFinalization(TestCase):
+	setUp = TestBrowserControls.setUp
+	def test_registration_reopens_idle_connection_before_writing(self):
+		database = MagicMock()
+		with patch.object(frappe, "db", database):
+			browser._register_capture("a" * 32)
+		self.assertEqual([call[0] for call in database.mock_calls],
+			["close", "connect", "set_single_value", "commit"])
+		database.set_single_value.assert_called_once_with(browser.SETTINGS, "browser_capture", "a" * 32)
+
+	def test_explicit_resume_requires_local_transfer_and_capture_action(self):
+		with tempfile.TemporaryDirectory() as directory:
+			path = os.path.join(directory, "transfer.json")
+			with patch.object(browser.workspace, "path", return_value=path):
+				with self.assertRaises(frappe.ValidationError):
+					browser._validate_resume_capture("capture", "a" * 32)
+				with open(path, "w") as handle:
+					handle.write("{}")
+				browser._validate_resume_capture("capture", "a" * 32)
+				for action, identifier in [("import", "a" * 32), ("capture", "../escape")]:
+					with self.assertRaises(frappe.ValidationError):
+						browser._validate_resume_capture(action, identifier)
+
+
 class TestCapture(TestCase):
 	def test_capture_keeps_migration_fields_and_downloads_unattached_images(self):
 		from onerc_vmms_migrate.tests.test_transform import volunteer_employee

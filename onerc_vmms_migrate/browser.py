@@ -109,10 +109,13 @@ def start(
 	source_frozen: bool = False,
 	exclusions_reviewed: bool = False,
 	email_login_confirmed: bool = False,
+	resume_capture_id: str = "",
 ) -> dict:
 	authorize()
 	if action not in ACTIONS:
 		frappe.throw("Unknown migration action.")
+	if resume_capture_id:
+		_validate_resume_capture(action, resume_capture_id)
 	settings = frappe.get_single(SETTINGS)
 	if action not in ("capture", "audit_logins") and not settings.browser_capture:
 		frappe.throw("Capture the old site first.")
@@ -132,6 +135,8 @@ def start(
 		frappe.throw("A migration job is already queued or running.")
 	try:
 		value = state()
+		if resume_capture_id:
+			value["pending_bulk_capture"] = resume_capture_id
 		value.update(
 			{
 				"action": action,
@@ -157,6 +162,25 @@ def start(
 		frappe.cache.delete(lock_key())
 		raise
 	return {"job_id": token}
+
+
+
+def _validate_resume_capture(action, capture_id):
+	import re
+	from pathlib import Path
+	if action != "capture" or not re.fullmatch(r"[a-f0-9]{32}", capture_id):
+		frappe.throw("Resume requires a valid existing capture identifier.")
+	if not Path(workspace.path("captures", capture_id, "transfer.json")).is_file():
+		frappe.throw("This capture has no saved bulk transfer on this site.")
+
+
+def _register_capture(capture_id):
+	# Source transfer can exceed the destination DB connection's idle timeout.
+	# Capture has no pending business writes; use a fresh connection to register it.
+	frappe.db.close()
+	frappe.db.connect()
+	frappe.db.set_single_value(SETTINGS, "browser_capture", capture_id)
+	frappe.db.commit()
 
 
 def execute(token, action, user):
@@ -193,11 +217,10 @@ def execute(token, action, user):
 					save_state(value)
 
 				result = bulk_capture(settings, capture_id, progress=progress)
-				value.pop("pending_bulk_capture", None)
 			else:
 				result = capture(settings, capture_id)
-			frappe.db.set_single_value(SETTINGS, "browser_capture", capture_id)
-			frappe.db.commit()
+			_register_capture(capture_id)
+			value.pop("pending_bulk_capture", None)
 			value.pop("rehearsal", None)
 		elif action == "audit_logins":
 			from onerc_vmms_migrate.bulk_source import BulkClient

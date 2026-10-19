@@ -83,7 +83,9 @@ async function migration_status(frm) {
  const escape = value => frappe.utils.escape_html(String(value ?? ''));
  let html = `<h4>${__('Migration progress')}</h4><p>${escape(state.action || 'No job started')} · ${escape(state.status || 'Ready')}</p>`;
  if (state.busy) html += '<p>Queued or running. You can leave this page and return. If it stays queued, ask hosting support to check the long background worker.</p>';
- if (state.transfer && state.busy) html += `<pre>${escape(JSON.stringify(state.transfer, null, 2))}</pre>`;
+ const progress = state.progress || state.transfer;
+ if (progress && state.busy) html += `<pre>${escape(JSON.stringify(progress, null, 2))}</pre>`;
+ if (state.progress_updated_at && state.busy) html += `<p>${__('Last progress update')}: ${escape(state.progress_updated_at)}</p>`;
  if (state.pending_bulk_capture && !state.busy) html += '<p>A bulk transfer can be resumed using Capture / resume old site.</p>';
  if (state.result?.complete === false) html += '<div class="alert alert-warning">The source snapshot has missing attachments. Review the missing-files report before importing.</div>';
  if (state.error) html += `<div class="alert alert-danger">${escape(state.error)}</div>`;

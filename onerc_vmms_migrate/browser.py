@@ -148,6 +148,10 @@ def start(
 				"result": None,
 			}
 		)
+		value.pop("progress", None)
+		value.pop("progress_updated_at", None)
+		if action != "capture":
+			value.pop("transfer", None)
 		save_state(value)
 		frappe.enqueue(
 			"onerc_vmms_migrate.browser.execute",
@@ -183,6 +187,16 @@ def _register_capture(capture_id):
 	frappe.db.commit()
 
 
+def _progress_reporter(value):
+	# Only aggregate counters leave the worker; never record source identities or credentials.
+	fields = {"phase", "processed", "total", "loaded", "existing", "failed", "reused", "transferred"}
+	def report(details):
+		value["progress"] = {key: item for key, item in details.items() if key in fields}
+		value["progress_updated_at"] = str(now_datetime())
+		save_state(value)
+	return report
+
+
 def execute(token, action, user):
 	from frappe.installer import update_site_config
 	from frappe.utils.scheduler import disable_scheduler
@@ -197,7 +211,12 @@ def execute(token, action, user):
 		frappe.set_user(user)
 		authorize()  # Revoked access must also prevent a queued job from running.
 		value.update({"status": "running"})
+		value.pop("progress", None)
+		value.pop("progress_updated_at", None)
+		if action != "capture":
+			value.pop("transfer", None)
 		save_state(value)
+		report_progress = _progress_reporter(value)
 		if action == "capture":
 			if frappe.db.count("Legacy Migration Record"):
 				frappe.throw(
@@ -248,7 +267,7 @@ def execute(token, action, user):
 			frappe.conf.mute_emails = 1
 			value["reconciled"] = False
 			save_state(value)
-			result = full_run.execute(confirm="LOAD")
+			result = full_run.execute(confirm="LOAD", progress=report_progress)
 			value["import_result"] = result
 		else:
 			funcs = {
@@ -261,7 +280,7 @@ def execute(token, action, user):
 				"rehearsal": full_run.execute,
 				"reconcile": full_reconcile.execute,
 			}
-			result = funcs[action]()
+			result = funcs[action](progress=report_progress) if action == "rehearsal" else funcs[action]()
 			if action == "rehearsal":
 				value["rehearsal"] = {
 					"fingerprint": fingerprint(),

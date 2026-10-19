@@ -293,12 +293,16 @@ def _check_phone(ctx, data) -> None:
 	from onerc_core.society.services import config
 
 	try:
+		# Red Profile also runs Frappe's Data/Phone validator, even when the
+		# society has no custom pattern. Apply that same rule before insertion
+		# so the explicit review setting can retain the original and omit it.
+		frappe.utils.validate_phone_number(data["phone"], throw=True)
 		config.validate_phone_number(data["phone"])
 	except frappe.ValidationError:
 		frappe.clear_last_message()
 		if not ctx["conf"].get("drop_invalid_phones"):
 			raise
-		ctx["warnings"].append(f"phone {data['phone']} does not match the society's pattern; not carried")
+		ctx["warnings"].append(f"phone {data['phone']} does not match destination phone validation; not carried")
 		data["phone"] = None
 
 

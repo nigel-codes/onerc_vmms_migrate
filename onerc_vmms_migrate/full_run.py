@@ -171,7 +171,7 @@ def execute(confirm=None, limit=None, progress=None):
 def coverage(snapshot):
     """Never confuse retained archives with usable native records."""
     from onerc_vmms_migrate.historical import ARCHIVE
-    counts=frappe.get_all(ARCHIVE,fields=['source_doctype','conversion_status','count(name) as n'],group_by='source_doctype,conversion_status')
+    counts=frappe.get_all(ARCHIVE,fields=['source_doctype','conversion_status',{'COUNT': '*', 'as': 'n'}],group_by='source_doctype,conversion_status',order_by=None)
     result={}
     for row in counts:
         result.setdefault(row.source_doctype,{})[row.conversion_status]=row.n

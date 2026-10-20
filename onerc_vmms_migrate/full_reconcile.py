@@ -35,10 +35,13 @@ def verify(snapshot):
             failures.append({'source_doctype':item['doctype'],'source_name':record['name'],'problem':'Missing or changed retained source version'})
     names={}
     for dt in {r.target_doctype for r in rows if r.target_doctype}:
-        names[dt]=set(frappe.get_all(dt,pluck='name')) if frappe.db.exists('DocType',dt) else set()
+        # Autoincrement DocTypes return integer names; archive Link/Data
+        # fields store text. Compare exact text without numeric coercion, so
+        # identifiers such as '00171' still differ from 171.
+        names[dt]={str(name) for name in frappe.get_all(dt,pluck='name')} if frappe.db.exists('DocType',dt) else set()
     for row in rows:
-        if row.conversion_status=='Converted' and row.target_name not in names.get(row.target_doctype,set()):
-            failures.append({'source_doctype':row.source_doctype,'source_name':row.source_name,'problem':'Native target is missing'})
+        if row.conversion_status=='Converted' and str(row.target_name) not in names.get(row.target_doctype,set()):
+            failures.append({'source_doctype':row.source_doctype,'source_name':row.source_name,'target_doctype':row.target_doctype,'target_name':row.target_name,'problem':'Native target is missing'})
     # Authentication hashes are compared only in memory and never enter reports.
     auth={r[0]:r[1] for r in frappe.db.sql("SELECT name,password FROM __Auth WHERE doctype='User' AND fieldname='password' AND encrypted=0")}
     passwords_checked=0

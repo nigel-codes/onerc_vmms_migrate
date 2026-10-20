@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — 2026-10-20
+
+- Compare native IDs and archived target links as exact text during final
+  reconciliation. Prevent false missing-target failures for numeric Buzz Event
+  and Event Ticket Type IDs without hiding genuinely absent records or merging
+  identifiers with leading zeros. Missing-target reports now include the
+  destination doctype and ID.
+
 ## 0.3.6 — 2026-10-20
 
 - Reuse Buzz's installed standard Event Categories by name and record their

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.6 — 2026-10-20
+
+- Reuse Buzz's installed standard Event Categories by name and record their
+  source conversion links, avoiding duplicate insertion failures on retry.
+  Preserve destination values and report differences; original source values
+  remain archived. Custom categories and other record collisions still block.
+
 ## 0.3.5 — 2026-10-20
 
 - Extend reviewed archive-only handling to history requiring absent Employees

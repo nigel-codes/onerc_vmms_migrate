@@ -80,6 +80,12 @@ a national project may keep its national node while volunteers and memberships
 stay county-only and the national test people remain excluded. Defaults are
 unchanged; the setting is included in test-session change review.
 
+Buzz installs standard categories (Conferences, Local, Meetups, Webinars and
+Zoom Meeting). History links these source categories to existing destination
+categories without changing their values, and reports differing source fields.
+Original source values stay archived. This reuse does not apply to hosts,
+venues, custom category names or other record collisions.
+
 Historical TOR stakeholder phones use the same explicit phone-review setting.
 Invalid values are omitted without discarding the stakeholder, and original
 values remain in the archive and private batch warning reports. Missing TOR

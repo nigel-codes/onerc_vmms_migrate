@@ -124,12 +124,15 @@ class Loader:
             values=build(row)
             values.setdefault('creation',row.get('creation'))
             values.setdefault('modified',row.get('modified'))
-            doc=historical.insert(target_dt,values,name=name)
+            doc = self.reuse_event_category(values, name) if source_dt == target_dt == 'Event Category' else None
+            outcome = 'existing' if doc is not None else 'created'
+            if doc is None:
+                doc=historical.insert(target_dt,values,name=name)
             historical.mark(self.snapshot,source_dt,row['name'],target_dt,doc.name,self.run_id)
             if batched:
                 self.converted_index[identity] = doc.name
             self.targets[(source_dt,row['name'])]=doc.name
-            self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':doc.name,'outcome':'created'})
+            self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':doc.name,'outcome':outcome})
             return doc.name
         except SourceIdentityExcluded as exc:
             frappe.db.rollback(save_point='vmms_history_record')
@@ -150,6 +153,29 @@ class Loader:
             self.failures.append({'source_doctype':source_dt,'source_name':row['name'],
                 'target_doctype':target_dt,'error':frappe.utils.strip_html(str(exc))})
             return None
+
+    def reuse_event_category(self, values, name):
+        """Buzz installs these vocabulary records before migration begins.
+
+        Link by their standard names, preserving destination presentation and
+        reporting source differences. This exception never applies to hosts,
+        venues, people, transactions or custom category-name collisions.
+        """
+        if name not in ('Conferences', 'Local', 'Meetups', 'Webinars', 'Zoom Meeting'):
+            return None
+        existing = frappe.db.exists('Event Category', name)
+        if not existing:
+            return None
+        doc = frappe.get_doc('Event Category', existing)
+        if int(values.get('docstatus') or 0) or int(doc.get('docstatus') or 0):
+            raise ValueError('Seeded Event Category has an unexpected document status: '+str(name))
+        differences = sorted(field for field, value in values.items()
+            if field not in ('creation', 'modified', 'docstatus')
+            and (value if value is not None else '') != (doc.get(field) if doc.get(field) is not None else ''))
+        self.warnings.append({'source_doctype': 'Event Category', 'source_name': name,
+            'target_name': doc.name, 'different_fields': ', '.join(differences),
+            'warning': 'Reused standard Buzz category; destination values unchanged, original source values retained in archive'})
+        return doc
 
     def copy_values(self, doctype, row, omit=()):
         """Native same-doctype scalar fields, with every unsupported value archived."""

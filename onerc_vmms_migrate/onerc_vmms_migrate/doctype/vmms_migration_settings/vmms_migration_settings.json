@@ -64,7 +64,7 @@
    "fieldname": "drop_invalid_phones",
    "fieldtype": "Check",
    "label": "Allow phone numbers requiring review",
-   "description": "Keep the original imported phone in a read-only profile field. If it fails this society\u2019s rules, leave the operational phone blank and report it for review."
+   "description": "Leave invalid profile and reference phones blank and report their original values for review. Omit emergency contacts with invalid required primary phones. Originals remain in the protected source capture/archive; the main original phone also stays on the profile."
   },
   {
    "fieldname": "emergency_contact_may_call",

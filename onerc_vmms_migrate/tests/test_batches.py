@@ -18,6 +18,33 @@ from onerc_vmms_migrate.history_load import BatchBoundary, Loader
 
 
 class TestBatchCheckpoint(TestCase):
+	def test_people_keep_phone_review_details_without_blocking_or_changing_source(self):
+		bundle = {"key": "person@example.test", "errors": [], "source_hash": "unchanged"}
+		review = {
+			"field": "vmms_references[1].phone",
+			"original_value": "+2542049963400719047340",
+			"action": "phone left blank",
+		}
+		with (
+			patch.object(batches, "build", return_value={"bundles": [bundle]}),
+			patch.object(batches.load, "already_migrated", return_value=None),
+			patch.object(batches.load, "load_bundle", return_value={"phone_review": [review]}),
+			patch.object(batches, "mark_person"),
+			patch.object(frappe, "db", MagicMock()),
+		):
+			processed, total, failures, summary = batches.people(
+				{},
+				None,
+				{},
+				{"offset": 0, "batch_size": 100, "run_id": "test", "mode": "test"},
+				lambda: False,
+				None,
+			)
+		self.assertEqual((processed, total, failures), (1, 1, []))
+		self.assertEqual(summary["loaded"], 1)
+		self.assertEqual(summary["phone_review"], [{"person": bundle["key"], **review}])
+		self.assertEqual(bundle["source_hash"], "unchanged")
+
 	def test_preflight_blocks_missing_lookup_targets_but_allows_reported_residence_fallbacks(self):
 		from onerc_vmms_migrate import run
 		from onerc_vmms_migrate.crosswalk import Crosswalks

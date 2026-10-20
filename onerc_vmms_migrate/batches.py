@@ -173,6 +173,7 @@ def people(snapshot, source, conf, value, stop, progress):
 	bundles = sorted(built["bundles"], key=lambda row: row["key"])
 	selected = bundles[value["offset"] : value["offset"] + value["batch_size"]]
 	failures = []
+	phone_review = []
 	processed = loaded = existing = rejected = 0
 	for bundle in selected:
 		if processed and stop():
@@ -197,6 +198,7 @@ def people(snapshot, source, conf, value, stop, progress):
 		try:
 			written = load.load_bundle(bundle, source, conf, value["run_id"], dry_run=value["mode"] == "test")
 			mark_person(snapshot, bundle, written, value["run_id"])
+			phone_review.extend({"person": bundle["key"], **row} for row in written.get("phone_review", []))
 			loaded += 1
 		except SilenceBreached:
 			raise
@@ -215,7 +217,7 @@ def people(snapshot, source, conf, value, stop, progress):
 					"failed": len(failures),
 				}
 			)
-	return processed, len(bundles), failures, {"loaded": loaded, "existing": existing, "rejected": rejected}
+	return processed, len(bundles), failures, {"loaded": loaded, "existing": existing, "rejected": rejected, "phone_review": phone_review}
 
 
 def work(snapshot, source, conf, value, progress):
@@ -409,6 +411,8 @@ def step(value, source, conf, progress=None):
 
 	name = f"batch-{value['attempt_number']:06d}-{phase}"
 	run._write_csv(directory, name + "-failures.csv", failures)
+	if summary.get("phone_review"):
+		run._write_csv(directory, name + "-phone-review.csv", summary["phone_review"])
 	workspace.write_json(
 		os.path.join(directory, name + ".json"),
 		{

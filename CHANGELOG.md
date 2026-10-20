@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 — 2026-10-20
+
+- Apply the reviewed invalid-phone setting to professional references and
+  emergency contacts as well as the main profile phone. Keep the person and
+  reference details; omit a contact only when its required primary phone is
+  invalid. Preserve source values and write private per-batch phone-review
+  reports. Strict mode and normal application validation remain unchanged.
+
 ## 0.3.1 — 2026-10-19
 
 - Stop batch preflight before loading when a mapped lookup target is missing.

@@ -25,6 +25,7 @@ exactly what the product would have written.
 """
 
 import os
+from copy import deepcopy
 
 import frappe
 from frappe.utils import get_datetime, now_datetime
@@ -134,6 +135,7 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		"volunteer": volunteer,
 		"member": member,
 		"warnings": ctx["warnings"],
+		"phone_review": ctx.get("phone_review", []),
 	}
 
 
@@ -236,11 +238,11 @@ def _clean_rows(rows):
 
 def _profile(ctx, user) -> str:
 	bundle = ctx["bundle"]
-	data = dict(bundle["profile"])
+	data = deepcopy(bundle["profile"])
 	meta = frappe.get_meta("Red Profile")
 
 	_check_links(ctx, data)
-	_check_phone(ctx, data)
+	_review_profile_phones(ctx, data)
 
 	existing = frappe.db.get_value("Red Profile", {"email": data["email"]}) or (
 		user and frappe.db.get_value("Red Profile", {"user": user})
@@ -287,8 +289,8 @@ def _check_links(ctx, data) -> None:
 			data[field] = None
 
 
-def _check_phone(ctx, data) -> None:
-	if not data.get("phone"):
+def _check_phone(ctx, data, field="phone", label="phone", society=True, required=False) -> None:
+	if not data.get(field):
 		return
 	from onerc_core.society.services import config
 
@@ -296,14 +298,37 @@ def _check_phone(ctx, data) -> None:
 		# Red Profile also runs Frappe's Data/Phone validator, even when the
 		# society has no custom pattern. Apply that same rule before insertion
 		# so the explicit review setting can retain the original and omit it.
-		frappe.utils.validate_phone_number(data["phone"], throw=True)
-		config.validate_phone_number(data["phone"])
+		frappe.utils.validate_phone_number(data[field], throw=True)
+		if society:
+			config.validate_phone_number(data[field])
 	except frappe.ValidationError:
 		frappe.clear_last_message()
 		if not ctx["conf"].get("drop_invalid_phones"):
 			raise
-		ctx["warnings"].append(f"phone {data['phone']} does not match destination phone validation; not carried")
-		data["phone"] = None
+		action = "contact omitted" if required else "phone left blank"
+		ctx["warnings"].append(f"{label}: {data[field]} fails destination phone validation; {action}; original retained in source capture/archive")
+		ctx.setdefault("phone_review", []).append({"field": label, "original_value": data[field], "action": action})
+		data[field] = None
+
+
+def _review_profile_phones(ctx, data):
+	_check_phone(ctx, data)
+	for index, row in enumerate(data.get("vmms_references") or [], 1):
+		_check_phone(ctx, row, label=f"vmms_references[{index}].phone", society=False)
+
+
+def _review_emergency_contacts(ctx, rows):
+	# A contact requires a primary phone. Keep its original in the source,
+	# rather than inventing a replacement or relaxing ordinary signup rules.
+	contacts = deepcopy(rows)
+	retained = []
+	for index, row in enumerate(contacts, 1):
+		_check_phone(ctx, row, "primary_phone", f"emergency_contacts[{index}].primary_phone", society=False, required=True)
+		if not row.get("primary_phone"):
+			continue
+		_check_phone(ctx, row, "alternative_phone", f"emergency_contacts[{index}].alternative_phone", society=False)
+		retained.append(row)
+	return retained
 
 
 # --- files ----------------------------------------------------------------------
@@ -400,7 +425,7 @@ def _volunteer(ctx, profile: str) -> str:
 			"volunteer": volunteer.name,
 			"skills": [{"skill": s} for s in application["skills"]],
 			"languages": [{"language": lang} for lang in application["languages"]],
-			"emergency_contacts": application["emergency_contacts"],
+			"emergency_contacts": _review_emergency_contacts(ctx, application["emergency_contacts"]),
 			"custom_answers": [_answer(row) for row in application["custom_answers"]],
 			"approval_state": "Draft",
 		}

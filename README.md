@@ -49,6 +49,7 @@ For a persistent test on a disposable destination:
 
 **A batch test is persistent, not a rollback rehearsal.** It creates accounts,
 Red Profiles, native affiliations, memberships and history on the test target.
+
 It verifies captured attachment bytes without installing real attachment files.
 Do not open this destination to users. Its records remain after testing; restore
 its backup or rebuild the test site afterwards. Keep the source capture, reports,
@@ -62,6 +63,15 @@ all backup, source-freeze, exclusion, attachment and login-delivery gates, copie
 actual attachment files and applies the login policy only after final checks.
 Finish cutover remains blocked until successful verification. Restoring services
 never undoes committed records.
+
+Enable **Allow phone numbers requiring review** to leave invalid profile and
+professional-reference phones blank rather than block the person. An emergency
+contact with an invalid required primary phone is omitted, while its original
+data remains in the protected capture/archive. Each affected people batch writes
+a `batch-…-people-phone-review.csv` with the person, field, original value and
+action for later correction. Valid phone values and ordinary signup rules are
+unchanged. A blocked test can resume after deployment with explicit review of
+the code/settings change; committed people are not recreated.
 
 Checkpoint storage is a restricted InnoDB singleton separate from the settings
 form. Every record batch and its checkpoint commit in the **same transaction**.

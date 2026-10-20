@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-10-21
+
+- Limit attachment planning to converted identities and referenced archive parent
+  types. Skip source tables with no native conversions before loading their rows,
+  avoiding a full comments/communications scan for every attachment plan.
+
 ## 0.4.0 — 2026-10-21
 
 - Add a separate attachment review and resumable copy workflow after a successful

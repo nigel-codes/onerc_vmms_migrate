@@ -161,9 +161,14 @@ def build(snapshot, conf):
 	plan = Plan(snapshot.get("all_file_manifest", snapshot.get("captured_file_manifest", {})))
 	capture = snapshot["source"].get("capture_id") or snapshot["source"].get("snapshot_id")
 	source_id = str(snapshot["source"].get("source_id") or snapshot["source"]["db_name"])
+	files = history.rows("File")
+	parent_types = sorted(
+		{"File"} | {row["attached_to_doctype"] for row in files if row.get("attached_to_doctype")}
+	)
 	archives = frappe.get_all(
 		historical.ARCHIVE,
 		filters={"source_id": source_id, "snapshot_id": capture},
+		or_filters=[["conversion_status", "=", "Converted"], ["source_doctype", "in", parent_types]],
 		fields=[
 			"name",
 			"source_doctype",
@@ -255,7 +260,7 @@ def build(snapshot, conf):
 			return True, roots.get((row["parenttype"], str(row.get("parent"))))
 		return False, None
 
-	for file in history.rows("File"):
+	for file in files:
 		url = file.get("file_url")
 		if not url:
 			continue
@@ -272,7 +277,10 @@ def build(snapshot, conf):
 		elif archive:
 			plan.add(url, historical.ARCHIVE, archive.name, file_record=file["name"])
 	metas = {}
+	native_source_types = {doctype for doctype, _name in targets}
 	for dt in history.schemas:
+		if dt not in native_source_types:
+			continue
 		fields = [
 			f
 			for f in history.schemas[dt].get("fields", [])

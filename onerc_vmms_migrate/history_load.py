@@ -54,6 +54,11 @@ class Loader:
         return target
 
     def geo(self, company):
+        override = (self.conf.get('history_branch_overrides') or {}).get(company)
+        if override:
+            if not frappe.db.exists('Geo Node', override):
+                raise ValueError('History Geo Node does not exist: '+str(override))
+            return override
         target=self.crosswalks.lookup('branch',company)
         if not target or target is UNMAPPED or target == DROP:
             raise ValueError('Unresolved source branch: '+str(company))

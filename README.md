@@ -73,6 +73,13 @@ action for later correction. Valid phone values and ordinary signup rules are
 unchanged. A blocked test can resume after deployment with explicit review of
 the code/settings change; committed people are not recreated.
 
+**Reviewed history branch mappings** accepts a JSON object of old Company names
+to destination Geo Node IDs. Use this only for reviewed operational history
+placements when the people branch mapping is intentionally excluded. For example,
+a national project may keep its national node while volunteers and memberships
+stay county-only and the national test people remain excluded. Defaults are
+unchanged; the setting is included in test-session change review.
+
 Checkpoint storage is a restricted InnoDB singleton separate from the settings
 form. Every record batch and its checkpoint commit in the **same transaction**.
 Redis is only the exclusive job lock/pause control; private JSON files are reports,

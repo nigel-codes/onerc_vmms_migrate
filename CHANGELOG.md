@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3 — 2026-10-20
+
+- Allow explicit, reviewed geography mappings for operational history without
+  reopening excluded volunteer or membership affiliations. Validate target nodes
+  and include the configuration in the existing test-session review fingerprint.
+
 ## 0.3.2 — 2026-10-20
 
 - Apply the reviewed invalid-phone setting to professional references and

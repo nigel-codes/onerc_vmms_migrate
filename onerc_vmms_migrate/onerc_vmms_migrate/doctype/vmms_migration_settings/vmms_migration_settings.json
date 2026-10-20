@@ -17,10 +17,18 @@
   "emergency_contact_may_call",
   "allow_missing_files",
   "allow_source_exclusions",
+  "history_branch_overrides",
   "browser_capture",
   "migration_dashboard"
  ],
  "fields": [
+  {
+   "fieldname": "history_branch_overrides",
+   "fieldtype": "Code",
+   "options": "JSON",
+   "label": "Reviewed history branch mappings",
+   "description": "Optional JSON object mapping source branch names to existing Geo Node IDs for operational history only. Does not change volunteer or membership branch mappings or their exclusions."
+  },
   {
    "fieldname": "instructions",
    "fieldtype": "HTML"

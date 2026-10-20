@@ -63,6 +63,20 @@ DEFAULTS = {
 }
 
 
+def history_branch_overrides(value) -> dict:
+	"""Explicit history geography, independent of people-affiliation exclusions."""
+	if not value:
+		return {}
+	rows = json.loads(value) if isinstance(value, str) else value
+	if not isinstance(rows, dict) or any(
+		not isinstance(source, str) or not source.strip()
+		or not isinstance(target, str) or not target.strip() or target.strip() == "-"
+		for source, target in rows.items()
+	):
+		raise ValueError("History branch overrides must be a JSON object of source branch names to Geo Node IDs.")
+	return rows
+
+
 def config() -> frappe._dict:
 	conf = frappe._dict(DEFAULTS)
 	conf.update(frappe.conf.get(CONFIG_KEY) or {})
@@ -74,6 +88,7 @@ def config() -> frappe._dict:
 					"browser_capture": settings.browser_capture,
 					"default_country_code": settings.default_country_code,
 					"drop_invalid_phones": bool(settings.drop_invalid_phones),
+					"history_branch_overrides": settings.get("history_branch_overrides"),
 					"emergency_contact_may_call": bool(settings.emergency_contact_may_call),
 					"preserve_passwords": bool(settings.get("preserve_passwords")),
 					"allow_missing_files": bool(settings.get("allow_missing_files")),
@@ -81,6 +96,7 @@ def config() -> frappe._dict:
 					"restore_email_link_login": bool(settings.get("restore_email_link_login")),
 				}
 			)
+	conf["history_branch_overrides"] = history_branch_overrides(conf.get("history_branch_overrides"))
 	return conf
 
 

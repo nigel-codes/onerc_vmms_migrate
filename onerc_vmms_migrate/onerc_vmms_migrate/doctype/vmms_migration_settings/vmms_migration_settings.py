@@ -9,6 +9,11 @@ class VMMSMigrationSettings(Document):
 		from onerc_vmms_migrate.bulk_source import source_origin
 
 		assert_idle()
+		from onerc_vmms_migrate.workspace import history_branch_overrides
+
+		for target in history_branch_overrides(self.get("history_branch_overrides")).values():
+			if not frappe.db.exists("Geo Node", target):
+				frappe.throw("History Geo Node does not exist: " + target)
 		self.source_url = source_origin(self.source_url) if self.get("capture_mode") == "Bulk Export" else validate_url(self.source_url)
 		if self.get("preserve_passwords") and self.get("capture_mode") != "Bulk Export":
 			frappe.throw("Preserving passwords requires Bulk Export and the source companion app.")

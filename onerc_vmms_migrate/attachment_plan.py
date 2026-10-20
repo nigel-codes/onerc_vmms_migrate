@@ -192,6 +192,7 @@ def build(snapshot, conf):
 		if row.person_key in profiles and profiles[row.person_key] != (row.target_name, row.source_hash):
 			raise ValueError("Person ledger has conflicting profile targets")
 		profiles[row.person_key] = (row.target_name, row.source_hash)
+	profile_roots = {"person:" + key: value[0] for key, value in profiles.items()}
 	for bundle in people:
 		root = None if bundle["errors"] or bundle.get("volunteer_excluded") else "person:" + bundle["key"]
 		for dt, name in bundle["sources"]:
@@ -263,6 +264,8 @@ def build(snapshot, conf):
 		if personal:
 			plan.claim(url, root)
 		target = targets.get((dt, str(name)))
+		if dt == "User" and root in profile_roots:
+			target = ("Red Profile", profile_roots[root])
 		archive = archived.get((dt, str(name))) or archived.get(("File", str(file["name"])))
 		if target:
 			plan.add(url, *target, file_record=file["name"])
@@ -309,8 +312,10 @@ def build(snapshot, conf):
 		url = user.get("user_image")
 		target = targets.get(("User", str(user["name"])))
 		if url and target:
-			plan.claim(url, roots.get(("User", str(user["name"]))))
-			plan.add(url, *target, binding(*target, "user_image", url, kind="Attach Image"))
+			root = roots.get(("User", str(user["name"])))
+			plan.claim(url, root)
+			parent = ("Red Profile", profile_roots[root]) if root in profile_roots else target
+			plan.add(url, *parent, binding(*target, "user_image", url, kind="Attach Image"))
 	for row in history.rows("Deployment Request Tool"):
 		url = row.get("tor_attachment")
 		target = targets.get(("Deployment Request Tool", str(row["name"])))
@@ -325,8 +330,22 @@ def build(snapshot, conf):
 				binding("VMMS Terms of Reference", terms, "legacy_terms_attachment", url),
 			)
 	result = plan.finish()
+	accepted = []
 	for task in result["tasks"]:
 		task["owner_chain"] = owner_chain(task["doctype"], task["name"], documents=owner_documents)
+		if not claims_match(plan.claims[plan.blob(task["url"])], task["owner_chain"]):
+			result["held"].append(
+				{**task, "reason": "Native owner differs from the source personal identity"}
+			)
+		else:
+			accepted.append(task)
+	result["tasks"] = accepted
+	result["summary"].update(
+		copy_tasks=len(accepted),
+		held_items=len(result["held"]),
+		unique_ready_urls=len({task["url"] for task in accepted}),
+		by_target=dict(Counter(task["doctype"] for task in accepted)),
+	)
 	return result
 
 
@@ -342,7 +361,23 @@ OWNER_LINKS = {
 }
 
 
-def owner_chain(doctype, name, seen=None, documents=None):
+def claims_match(claims, chain):
+	if not claims:
+		return True
+	for node in chain:
+		email = (
+			node["name"]
+			if node["doctype"] == "User"
+			else node["fields"].get("email")
+			if node["doctype"] == "Red Profile"
+			else None
+		)
+		if email and "person:" + str(email).strip().lower() not in claims:
+			return False
+	return True
+
+
+def owner_chain(doctype, name, seen=None, documents=None, for_update=False):
 	seen = set() if seen is None else seen
 	documents = {} if documents is None else documents
 	identity = (doctype, str(name))
@@ -354,7 +389,7 @@ def owner_chain(doctype, name, seen=None, documents=None):
 		wanted = ["owner"] + [field for field in OWNER_LINKS.get(doctype, {}) if meta.has_field(field)]
 		if doctype == "Red Profile":
 			wanted.append("email")
-		documents[identity] = frappe.db.get_value(doctype, name, wanted, as_dict=True)
+		documents[identity] = frappe.db.get_value(doctype, name, wanted, as_dict=True, for_update=for_update)
 	doc = documents[identity]
 	if not doc:
 		raise ValueError("Native attachment owner no longer exists")
@@ -366,5 +401,5 @@ def owner_chain(doctype, name, seen=None, documents=None):
 	chain = [{"doctype": doctype, "name": str(name), "fields": fields}]
 	for field, target in links.items():
 		if doc.get(field):
-			chain.extend(owner_chain(target, doc.get(field), seen, documents))
+			chain.extend(owner_chain(target, doc.get(field), seen, documents, for_update))
 	return chain

@@ -142,9 +142,21 @@ class TestAttachmentPlan(TestCase):
 			db.get_value.return_value = frappe._dict(owner="Administrator")
 			plan = attachment_plan.build(snapshot, {})
 			self.assertFalse(plan["held"])
-			self.assertEqual(len(plan["tasks"]), 2)
+			self.assertEqual(len(plan["tasks"]), 1)
 			task = next(task for task in plan["tasks"] if task["doctype"] == "Red Profile")
 			self.assertEqual(task["name"], "P1")
 			self.assertEqual(task["bindings"][0]["name"], "child")
 			db.set_value.assert_not_called()
 			db.commit.assert_not_called()
+
+	def test_source_person_claim_must_match_native_profile_and_login(self):
+		from onerc_vmms_migrate.attachment_plan import claims_match
+
+		chain = [
+			{"doctype": "Red Profile", "name": "P1", "fields": {"email": "owner@example.test"}},
+			{"doctype": "User", "name": "other@example.test", "fields": {}},
+		]
+		self.assertFalse(claims_match({"person:owner@example.test"}, chain))
+		chain[1]["name"] = "owner@example.test"
+		self.assertTrue(claims_match({"person:owner@example.test"}, chain))
+		self.assertTrue(claims_match({"person:owner@example.test"}, chain[:1]))

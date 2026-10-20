@@ -5,13 +5,21 @@
  "issingle": 1,
  "engine": "InnoDB",
  "field_order": [
-  "checkpoint"
+  "checkpoint",
+  "attachment_checkpoint"
  ],
  "fields": [
   {
    "fieldname": "checkpoint",
    "fieldtype": "Long Text",
    "label": "Committed checkpoint",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "attachment_checkpoint",
+   "fieldtype": "Long Text",
+   "label": "Trial attachment checkpoint",
    "read_only": 1,
    "hidden": 1
   }

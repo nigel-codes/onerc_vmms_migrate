@@ -50,6 +50,10 @@ def assert_idle():
 	batch = checkpoint()
 	if batch and batch["status"] == "ready":
 		frappe.throw("Pause the batch session before changing migration inputs.")
+	from onerc_vmms_migrate.trial_attachments import state as attachment_state
+	files = attachment_state()
+	if files and files["status"] == "ready":
+		frappe.throw("Pause the attachment copy before changing migration inputs or restoring services.")
 	if frappe.cache.get(lock_key()):
 		frappe.throw("A migration job is queued or running. Wait for it to finish before making changes.")
 
@@ -69,7 +73,7 @@ def save_state(value):
 	os.replace(temporary, path)
 
 
-def fingerprint():
+def fingerprint(include_code=True):
 	conf = dict(workspace.config())
 	digest = hashlib.sha256(json.dumps(conf, sort_keys=True, default=str).encode())
 	for kind in sorted(crosswalk.KINDS):
@@ -77,6 +81,8 @@ def fingerprint():
 		if os.path.isfile(path):
 			with open(path, "rb") as handle:
 				digest.update(handle.read())
+	if not include_code:
+		return digest.hexdigest()
 	# A code/schema update invalidates a previous rehearsal too.
 	from pathlib import Path
 	for file in sorted(Path(__file__).parent.rglob("*")):
@@ -94,6 +100,8 @@ def status() -> dict:
 	batch = checkpoint()
 	if batch:
 		value["batch"] = public_state(batch)
+	from onerc_vmms_migrate.trial_attachments import state as attachment_state, public as attachment_public
+	value["attachment_batch"] = attachment_public(attachment_state())
 	value["reports"] = []
 	reports = workspace.path("reports", "placeholder")
 	reports = os.path.dirname(reports)

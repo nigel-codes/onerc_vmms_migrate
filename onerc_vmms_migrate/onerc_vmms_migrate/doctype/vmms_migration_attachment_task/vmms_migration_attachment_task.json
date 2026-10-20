@@ -1,0 +1,42 @@
+{
+ "doctype": "DocType",
+ "name": "VMMS Migration Attachment Task",
+ "module": "onerc_vmms Migrate",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "field_order": [
+  "plan_id",
+  "task_index",
+  "task_payload"
+ ],
+ "fields": [
+  {
+   "fieldname": "plan_id",
+   "label": "Private attachment plan",
+   "fieldtype": "Data",
+   "reqd": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "task_index",
+   "label": "Task index",
+   "fieldtype": "Int",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "task_payload",
+   "label": "Reviewed attachment task",
+   "fieldtype": "Long Text",
+   "reqd": 1,
+   "read_only": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ]
+}

@@ -87,6 +87,16 @@ resource UOM labels are created under their recorded names; no unit conversion
 or mapping to a different unit is inferred. Existing UOMs are reused. History
 batches expose warnings and exclusions as private CSVs as well as JSON summaries.
 
+Enable **Archive history with missing source dependencies** only after reviewing
+source gaps. Required User or Terms of Reference links absent from the capture
+can then leave the dependent record archived with an `Excluded` conversion
+status and review note. No replacement identity or approval is invented.
+Dependents of already excluded people are also retained and reported. Exclusion
+dispositions commit with the checkpoint and are reloaded for the same capture,
+so retries do not loop over those records. A source-present record with an
+unresolved mapping remains a failure. The ordinary source-exclusion approval
+and final percentage limits still apply; this setting does not waive them.
+
 Checkpoint storage is a restricted InnoDB singleton separate from the settings
 form. Every record batch and its checkpoint commit in the **same transaction**.
 Redis is only the exclusive job lock/pause control; private JSON files are reports,

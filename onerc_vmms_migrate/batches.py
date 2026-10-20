@@ -135,6 +135,10 @@ def excluded_identities(snapshot, built):
 		if dt != "User" and (bundle["errors"] or (dt == "Employee" and bundle.get("volunteer_excluded")))
 	}
 	snapshot["excluded_native_identities"].update(
+		(row["source_doctype"], str(row["source_name"]))
+		for row in built.get("not_migrated", [])
+	)
+	snapshot["excluded_native_identities"].update(
 		("User", r["name"])
 		for r in snapshot["users"].values()
 		if r["name"] not in ("Administrator", "Guest")

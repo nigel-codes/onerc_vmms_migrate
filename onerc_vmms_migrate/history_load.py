@@ -31,6 +31,15 @@ class Loader:
         self.targets = {}
         self.results, self.failures, self.excluded, self.warnings = [], [], [], []
         self.excluded_identities=set(snapshot.get('excluded_native_identities',[]))
+        self.excluded_reasons = {}
+        source_id = str(snapshot['source'].get('source_id') or snapshot['source']['db_name'])
+        capture = snapshot['source'].get('capture_id') or snapshot['source'].get('snapshot_id')
+        for row in frappe.get_all(historical.ARCHIVE,
+                filters={'source_id': source_id, 'snapshot_id': capture, 'conversion_status': 'Excluded'},
+                fields=['source_doctype', 'source_name', 'conversion_note']):
+            identity = (row.source_doctype, str(row.source_name))
+            self.excluded_identities.add(identity)
+            self.excluded_reasons[identity] = row.conversion_note
         self.dry_run = dry_run
         self.by_source = {}
         for row in frappe.get_all('Legacy Migration Record',fields=['source_doctype','source_name','target_doctype','target_name']):
@@ -50,6 +59,10 @@ class Loader:
         if not target and doctype in ('User','Currency','Country') and frappe.db.exists(doctype,name):
             target=name
         if not target and required:
+            if self.conf.get('allow_missing_history_dependencies') and doctype in ('User', 'Personnel Terms of Reference'):
+                present = name in self.snapshot.get('users', {}) if doctype == 'User' else self.history.get(doctype, name)
+                if not present:
+                    raise SourceIdentityExcluded('Required '+doctype+' is absent from the captured source: '+name+'; original dependent record retained in archive')
             raise ValueError('Unresolved '+doctype+' reference: '+str(name))
         return target
 
@@ -66,7 +79,8 @@ class Loader:
 
     def one(self, source_dt, row, target_dt, build, name=None):
         if (source_dt,row['name']) in self.excluded_identities:
-            self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':'Source identity requires review; original record retained'})
+            reason = getattr(self, 'excluded_reasons', {}).get((source_dt, str(row['name']))) or 'Source identity requires review; original record retained'
+            self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':reason})
             return None
         batched = getattr(self, 'batch_limit', None) is not None
         identity = (source_dt, str(row['name']))
@@ -97,6 +111,14 @@ class Loader:
         except SourceIdentityExcluded as exc:
             frappe.db.rollback(save_point='vmms_history_record')
             frappe.clear_messages()
+            # Commit an exclusion disposition with this batch's checkpoint.
+            # Retain the original payload; retries must not spend every batch
+            # reattempting the same intentionally unconverted dependencies.
+            historical.exclude(self.snapshot, source_dt, row['name'], str(exc), self.run_id)
+            self.excluded_identities.add(identity)
+            if not hasattr(self, 'excluded_reasons'):
+                self.excluded_reasons = {}
+            self.excluded_reasons[identity] = str(exc)
             self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':str(exc)})
             return None
         except Exception as exc:

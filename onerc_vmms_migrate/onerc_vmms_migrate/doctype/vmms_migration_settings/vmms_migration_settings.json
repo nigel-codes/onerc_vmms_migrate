@@ -17,11 +17,18 @@
   "emergency_contact_may_call",
   "allow_missing_files",
   "allow_source_exclusions",
+  "allow_missing_history_dependencies",
   "history_branch_overrides",
   "browser_capture",
   "migration_dashboard"
  ],
  "fields": [
+  {
+   "fieldname": "allow_missing_history_dependencies",
+   "fieldtype": "Check",
+   "label": "Archive history with missing source dependencies",
+   "description": "Reviewed exception: retain and report operational history that requires a User or Terms of Reference absent from the capture. Never invent a coordinator or approval. Source-present records with unresolved mappings still block. Existing exclusion review and limits remain enforced."
+  },
   {
    "fieldname": "history_branch_overrides",
    "fieldtype": "Code",

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.4 — 2026-10-20
+
+- Extend invalid-phone review to historical TOR stakeholder phones. Preserve
+  recorded TOR resource UOM labels without inventing unit conversions.
+- Add explicit review for history requiring Users or Terms of Reference absent
+  from the capture. Retain source payloads and persist exclusion dispositions
+  with batch checkpoints, so retries and final verification account for them.
+  Propagate approved person exclusions to dependent history; unresolved mappings
+  for source-present records still block.
+- Write per-batch history warning/exclusion CSVs and identify missing link fields
+  in errors. Existing live-import gates and exclusion limits remain enforced.
+
 ## 0.3.3 — 2026-10-20
 
 - Allow explicit, reviewed geography mappings for operational history without

@@ -38,6 +38,7 @@ DEFAULTS = {
 	# A phone the society's pattern refuses: reject the person (strict) or
 	# load them without a phone and list them in warnings.csv.
 	"drop_invalid_phones": False,
+	"allow_missing_history_dependencies": False,
 	# HRMS kept one emergency contact on the Employee. Whether the person agreed
 	# to that contact being called is not recorded there, so it is a decision.
 	"emergency_contact_may_call": False,
@@ -88,6 +89,7 @@ def config() -> frappe._dict:
 					"browser_capture": settings.browser_capture,
 					"default_country_code": settings.default_country_code,
 					"drop_invalid_phones": bool(settings.drop_invalid_phones),
+					"allow_missing_history_dependencies": bool(settings.get("allow_missing_history_dependencies")),
 					"history_branch_overrides": settings.get("history_branch_overrides"),
 					"emergency_contact_may_call": bool(settings.emergency_contact_may_call),
 					"preserve_passwords": bool(settings.get("preserve_passwords")),

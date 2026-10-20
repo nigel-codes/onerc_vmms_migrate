@@ -142,3 +142,14 @@ def converted(snapshot, doctype, name):
     if rows and frappe.db.exists(rows[0].target_doctype, rows[0].target_name):
         return rows[0].target_name
     return None
+
+
+def exclude(snapshot, doctype, name, reason, run_id):
+    """Record a reviewed non-conversion without changing the source payload."""
+    source = snapshot['source']
+    source_id = str(source.get('source_id') or source['db_name'])
+    frappe.db.set_value(ARCHIVE, {
+        'record_id': archive_id(source_id, doctype, name),
+        'snapshot_id': source.get('capture_id') or source.get('snapshot_id'),
+        'conversion_status': 'Retained',
+    }, {'conversion_status': 'Excluded', 'conversion_note': reason, 'run_id': run_id}, update_modified=False)

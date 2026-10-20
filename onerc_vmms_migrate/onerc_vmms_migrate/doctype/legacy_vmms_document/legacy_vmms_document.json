@@ -79,9 +79,15 @@
    "fieldtype": "Select",
    "label": "Conversion",
    "read_only": 1,
-   "options": "Retained\nConverted",
+   "options": "Retained\nConverted\nExcluded",
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "conversion_note",
+   "fieldtype": "Small Text",
+   "label": "Conversion Review Note",
+   "read_only": 1
   },
   {
    "fieldname": "target_doctype",
@@ -122,6 +128,7 @@
   "legacy_parent",
   "legacy_parentfield",
   "conversion_status",
+  "conversion_note",
   "target_doctype",
   "target_name",
   "run_id",

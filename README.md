@@ -105,6 +105,37 @@ so retries do not loop over those records. A source-present record with an
 unresolved mapping remains a failure. The ordinary source-exclusion approval
 and final percentage limits still apply; this setting does not waive them.
 
+After a **successful persistent batch test**, the disposable destination can
+receive actual files without another people import. In **Trial attachments**:
+
+1. Use **Prepare attachment plan**. This reads the existing capture and native
+   identities, rechecks native reconciliation and creates private reports. It
+   copies no files. Download `attachment-review.json` (summary),
+   `attachment-held.csv` (exceptions) and `attachment-plan.json` (full plan).
+2. Review missing files, unknown owners, shared accounts/contents and conflicting
+   attachment slots. These are held out of automatic copying; their original
+   bytes remain in the capture. The missing-file setting never supplies absent
+   bytes or resolves ambiguous ownership.
+3. Back up the trial database/files, then use **Copy reviewed trial files**.
+   Confirm the disposable site and reviewed plan; enter `COPY FILES`. Start with
+   100 attachments per job. Each job commits copied File rows, exact native field
+   links and a separate attachment checkpoint together. The successful test
+   checkpoint is preserved; accounts, affiliations and history are not reloaded.
+4. Use **Pause attachment copy** or **Resume attachment copy** as needed. Native
+   owner links, capture, settings, mappings and plan must remain unchanged. A
+   deployed code-only fix needs explicit review on resume. Retry checks private
+   owner links and SHA-256 before reusing a copy.
+5. `copied` means the planned tasks finished, including private verification of
+   bytes and owner links. It does not include held items or establish user access.
+   Test each representative owner's view, a different user's view and Guest
+   direct-URL access before restoring trial services. No live-import approval,
+   login-policy change or automatic service restoration occurs.
+
+All newly installed trial copies, including photos and event images, are private.
+Public image presentation therefore needs separate review; this mode does not
+silently publish personal documents. Private-only handling here does not change
+the separate full-import workflow. Reports contain private source identifiers.
+
 Checkpoint storage is a restricted InnoDB singleton separate from the settings
 form. Every record batch and its checkpoint commit in the **same transaction**.
 Redis is only the exclusive job lock/pause control; private JSON files are reports,

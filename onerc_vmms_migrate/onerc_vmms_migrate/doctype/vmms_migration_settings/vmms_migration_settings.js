@@ -68,6 +68,41 @@ frappe.ui.form.on('VMMS Migration Settings', {
     dialog.hide(); migration_status(frm);
    }}); dialog.show();
   }, __('3. Validate'));
+  frm.add_custom_button(__('Prepare attachment plan'), async () => {
+   if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+   await migration_json('onerc_vmms_migrate.trial_attachments.prepare');
+   migration_status(frm);
+  }, __('Trial attachments'));
+  frm.add_custom_button(__('Copy reviewed trial files'), async () => {
+   if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+   const {message: current} = await frappe.call({method: migration_api + 'status'});
+   const plan = current.attachment_batch;
+   if (!plan || plan.status !== 'review') { frappe.msgprint(__('Prepare and review an attachment plan first.')); return; }
+   const dialog = new frappe.ui.Dialog({title: __('Copy attachments to this trial'), fields: [
+    {fieldtype: 'HTML', options: '<p>This copies private files to the existing trial records. It does not import people again. Review attachment-review.json, attachment-held.csv and the full attachment-plan.json first. Held or missing files are excluded from automatic copying. All new copies are private. The completed test remains intact.</p>'},
+    {fieldname: 'test_destination', fieldtype: 'Check', label: __('This is the disposable test destination'), reqd: 1},
+    {fieldname: 'backup_confirmed', fieldtype: 'Check', label: __('I have a current database and files backup'), reqd: 1},
+    {fieldname: 'review_confirmed', fieldtype: 'Check', label: __('I reviewed the missing files and ownership exceptions'), reqd: 1},
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Files per job (1–1000)'), default: 100, reqd: 1},
+    {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type COPY FILES'), reqd: 1}
+   ], primary_action_label: __('Copy files'), primary_action: async values => {
+    await migration_json('onerc_vmms_migrate.trial_attachments.start', {...values, plan_digest: plan.plan_digest});
+    dialog.hide(); migration_status(frm);
+   }}); dialog.show();
+  }, __('Trial attachments'));
+  frm.add_custom_button(__('Pause attachment copy'), async () => {
+   await migration_json('onerc_vmms_migrate.trial_attachments.pause'); migration_status(frm);
+  }, __('Trial attachments'));
+  frm.add_custom_button(__('Resume attachment copy'), () => {
+   const dialog = new frappe.ui.Dialog({title: __('Resume trial attachments'), fields: [
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Files per job (1–1000)'), default: 100, reqd: 1},
+    {fieldname: 'accept_code_changes', fieldtype: 'Check', label: __('I reviewed deployed code changes since the attachment plan'), description: __('The capture, settings, mappings and saved plan must remain unchanged.')}
+   ], primary_action_label: __('Resume'), primary_action: async values => {
+    if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+    await migration_json('onerc_vmms_migrate.trial_attachments.resume', values);
+    dialog.hide(); migration_status(frm);
+   }}); dialog.show();
+  }, __('Trial attachments'));
   frm.add_custom_button(__('Import captured data'), async () => {
    const {message: state} = await frappe.call({method: migration_api + 'status'});
    const needs_email_test = !!state.rehearsal?.authentication_policy?.mail_delivery_test_required;
@@ -122,6 +157,13 @@ async function migration_status(frm) {
   if (batch.status === 'blocked') html += '<p>Automatic batches stopped. Review the latest batch failure report, fix the cause, then use Resume / retry batches. Earlier committed batches remain intact.</p>';
   if (batch.mode === 'test' && batch.status === 'finished') html += '<p>Batch testing finished. Its records remain on this test site. This result does not authorize a live import.</p>';
  }
+ if (state.attachment_batch) {
+  const files = state.attachment_batch;
+  html += `<div class="alert alert-info"><strong>${__('Trial attachments')}</strong><br>${escape(files.status)} · ${escape(files.offset)} / ${escape(files.total)} · ${__('Held for review')}: ${escape(files.summary?.held_items || 0)}</div>`;
+  if (files.status === 'review') html += '<p>Review attachment-review.json, attachment-held.csv and the full attachment-plan.json before using Copy reviewed trial files. Nothing has been copied by this plan.</p>';
+  if (files.status === 'copied') html += '<p>Planned private copies completed. Held files remain unresolved. Test user, other-user and Guest file access before restoring services.</p>';
+  if (files.error) html += `<p>${escape(files.error)}</p>`;
+ }
  if (state.cutover) html += '<div class="alert alert-warning">Cutover is active: scheduled jobs are paused and email is muted. Reconcile, then use Finish cutover to restore the original settings.</div>';
  if (state.result) html += `<pre style="max-height:360px;overflow:auto">${escape(JSON.stringify(state.result, null, 2))}</pre>`;
  if (state.rehearsal) html += `<p>Last full rehearsal: ${state.rehearsal.passed ? 'passed' : 'needs attention'}. Changes to the capture, mappings or settings require another rehearsal.</p>`;
@@ -138,7 +180,7 @@ async function migration_status(frm) {
   html += '</ul>';
  }
  frm.get_field('migration_dashboard').$wrapper.html(html);
- if (state.busy || state.batch?.status === 'ready') frm._migration_timer = setTimeout(() => {
+ if (state.busy || state.batch?.status === 'ready' || state.attachment_batch?.status === 'ready') frm._migration_timer = setTimeout(() => {
   if (cur_frm === frm) migration_status(frm);
  }, 4000);
  else if (state.action === 'capture' && state.status === 'finished' && state.result?.capture_id !== frm.doc.browser_capture) frm.reload_doc();

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 — 2026-10-21
+
+- Add a separate attachment review and resumable copy workflow after a successful
+  persistent batch test. Preserve its test checkpoint and existing people/history;
+  do not promote trial data to live import or change login policy.
+- Prepare private plans before any copy. Hold missing bytes, unknown/shared-person
+  ownership, identical contents used by different people, and conflicting child
+  attachment slots. Include transformed Red Profile documents, historical Attach
+  fields/HTML, avatars and file-based TOR evidence.
+- Require explicit plan review, backup and disposable-site confirmation. Copy only
+  planned files, privately, with SHA-256/owner checks and atomic independent batch
+  checkpoints. Reuse verified copies on retry; never overwrite another field value.
+- Add progress, pause and retry controls. Capture/settings/mapping changes stop the
+  copy; explicitly reviewed code-only changes can resume its unchanged plan.
+  Held exceptions and manual cross-user/Guest access checks remain outstanding.
+
 ## 0.3.7 — 2026-10-20
 
 - Compare native IDs and archived target links as exact text during final

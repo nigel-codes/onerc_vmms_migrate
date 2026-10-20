@@ -80,6 +80,13 @@ a national project may keep its national node while volunteers and memberships
 stay county-only and the national test people remain excluded. Defaults are
 unchanged; the setting is included in test-session change review.
 
+Historical TOR stakeholder phones use the same explicit phone-review setting.
+Invalid values are omitted without discarding the stakeholder, and original
+values remain in the archive and private batch warning reports. Missing TOR
+resource UOM labels are created under their recorded names; no unit conversion
+or mapping to a different unit is inferred. Existing UOMs are reused. History
+batches expose warnings and exclusions as private CSVs as well as JSON summaries.
+
 Checkpoint storage is a restricted InnoDB singleton separate from the settings
 form. Every record batch and its checkpoint commit in the **same transaction**.
 Redis is only the exclusive job lock/pause control; private JSON files are reports,

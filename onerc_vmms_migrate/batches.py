@@ -413,6 +413,10 @@ def step(value, source, conf, progress=None):
 	run._write_csv(directory, name + "-failures.csv", failures)
 	if summary.get("phone_review"):
 		run._write_csv(directory, name + "-phone-review.csv", summary["phone_review"])
+	if summary.get("warnings"):
+		run._write_csv(directory, name + "-warnings.csv", summary["warnings"])
+	if summary.get("exclusions"):
+		run._write_csv(directory, name + "-exclusions.csv", summary["exclusions"])
 	workspace.write_json(
 		os.path.join(directory, name + ".json"),
 		{

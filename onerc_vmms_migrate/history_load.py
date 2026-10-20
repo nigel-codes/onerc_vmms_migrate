@@ -156,6 +156,27 @@ class Loader:
             values=boundaries(frappe.get_all('Task',fields=['name','parent_task']),'parent_task')
             frappe.db.bulk_update('Task',values,update_modified=False)
 
+    def review_phone(self, source_dt, source_name, values, field):
+        from onerc_vmms_migrate.load import _check_phone
+        context = {'conf': self.conf, 'warnings': []}
+        _check_phone(context, values, field, field, society=False)
+        for row in context.get('phone_review', []):
+            self.warnings.append({'source_doctype': source_dt, 'source_name': source_name, **row,
+                'warning': 'Invalid historical phone omitted; original retained in source archive'})
+
+    def resource_unit(self, unit, parent):
+        if not unit:
+            return None
+        existing = frappe.db.exists('UOM', unit)
+        if existing:
+            return existing
+        # A recorded label is vocabulary, not a conversion factor. Do not map
+        # unfamiliar labels to another unit or invent stock conversions.
+        doc = frappe.get_doc({'doctype': 'UOM', 'uom_name': unit}).insert(ignore_permissions=True)
+        self.warnings.append({'source_doctype': 'Personnel Terms of Reference', 'source_name': parent,
+            'warning': 'Created recorded legacy UOM label: '+str(unit)+'; no conversion inferred'})
+        return doc.name
+
     def terms(self):
         child_map={'stakeholders':('TOR Stakeholders','stakeholder'), 'objectives':('TOR Objectives','objective'),
             'expected_outputs':('TOR Outputs','output'), 'approach_methods':('TOR Approach Methods','approach'),
@@ -170,7 +191,8 @@ class Loader:
                     'notes':'Imported legacy terms; original wording and state retained in Legacy VMMS Document.'}
                 for field,(child_dt,required_field) in child_map.items():
                     target_child=frappe.get_meta('VMMS Terms of Reference').get_field(field).options
-                    target_fields={f.fieldname for f in frappe.get_meta(target_child).fields}
+                    target_meta=frappe.get_meta(target_child)
+                    target_fields={f.fieldname for f in target_meta.fields}
                     children=[]
                     for child in self.history.children('Personnel Terms of Reference',r['name'],field):
                         new={k:v for k,v in child.items() if k in target_fields}
@@ -185,6 +207,11 @@ class Loader:
                         if field=='resources':
                             new['needed_on']=child.get('date')
                             new['unit_cost']=child.get('cost_per_day')
+                            if new.get('unit'):
+                                new['unit']=self.resource_unit(new['unit'], r['name'])
+                        for target_field in target_meta.fields:
+                            if target_field.fieldtype=='Data' and target_field.options=='Phone':
+                                self.review_phone('Personnel Terms of Reference', r['name'], new, target_field.fieldname)
                         children.append(new)
                     values[field]=children
                 return values

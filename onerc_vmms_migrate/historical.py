@@ -51,7 +51,8 @@ def insert(doctype, values, name=None):
     for linked in [doc,*doc.get_all_children()]:
         invalid,_cancelled=linked.get_invalid_links()
         if invalid:
-            raise frappe.LinkValidationError('A historical record references a missing destination document.')
+            details='; '.join(str(field)+'='+str(value)+' ('+str(label)+')' for field,value,label in invalid)
+            raise frappe.LinkValidationError('A historical record references a missing destination document: '+details)
     unclaimed=doctype=='Event Booking' and doc.get('legacy_unclaimed_booking') and not doc.get('user')
     if unclaimed:
         # Validate every other required field without inventing a booker. This

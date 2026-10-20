@@ -88,9 +88,11 @@ or mapping to a different unit is inferred. Existing UOMs are reused. History
 batches expose warnings and exclusions as private CSVs as well as JSON summaries.
 
 Enable **Archive history with missing source dependencies** only after reviewing
-source gaps. Required User or Terms of Reference links absent from the capture
-can then leave the dependent record archived with an `Excluded` conversion
-status and review note. No replacement identity or approval is invented.
+source gaps. Required User, Employee or Terms of Reference links absent from the
+capture can then leave the dependent record archived with an `Excluded` conversion
+status and review note. Standalone assignments with neither a usable deployment
+nor structured TOR are also retained, including their original file references.
+No replacement identity, deployment scope or approval is invented.
 Dependents of already excluded people are also retained and reported. Exclusion
 dispositions commit with the checkpoint and are reloaded for the same capture,
 so retries do not loop over those records. A source-present record with an
@@ -183,7 +185,9 @@ bench restart
 Source identities that cannot safely become native profiles/accounts are listed
 separately and retain their original records. The explicit **Allow reviewed source
 identity exceptions** option permits at most 1% of people and separately 1% of
-accounts; dependent history exclusions are also capped at 1%. Runtime failures
+accounts. History cascading from those approved identity exclusions is reported
+separately rather than counted again as new source gaps. New or unclassified
+history gaps remain capped at 1% of history records. Runtime failures
 always block successful qualification. Review counts for each priority area.
 
 Missing files block a successful rehearsal unless the operator explicitly enables

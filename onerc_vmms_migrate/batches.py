@@ -362,7 +362,7 @@ def verify(snapshot, conf, value):
 	if snapshot.get("capture_complete") is False and not conf.get("allow_missing_files"):
 		failures.append({"problem": "Attachment exceptions require review and explicit approval"})
 	# Re-run the idempotent adapters to account for every history exclusion.
-	from onerc_vmms_migrate.history_load import Loader
+	from onerc_vmms_migrate.history_load import Loader, history_exclusion_counts, history_exclusions_accepted
 
 	excluded_identities(snapshot, built)
 	history = Loader(snapshot, value["run_id"], None, conf, dry_run=value["mode"] == "test").run_batch(
@@ -382,10 +382,12 @@ def verify(snapshot, conf, value):
 		failures.append(
 			{"problem": "Volunteer source exclusions require review or exceed the permitted limit"}
 		)
-	if history["excluded_count"] and not (
-		conf.get("allow_source_exclusions")
-		and history["excluded_count"] / max(1, history["converted"] + history["excluded_count"]) <= 0.01
-	):
+	# Approved identity exclusions were checked above against source people. A
+	# person's many history rows must not count as many additional bad people.
+	# New missing-history dependencies retain the independent 1% review gate.
+	exclusion_counts = history_exclusion_counts(history)
+	summary["history"]["exclusion_categories"] = exclusion_counts
+	if not history_exclusions_accepted(history, conf.get("allow_source_exclusions")):
 		failures.append({"problem": "History source exclusions require review or exceed the permitted limit"})
 	directory = workspace.report_dir(value["run_id"])
 	run._write_csv(directory, "history-source-exclusions.csv", history["exclusions"])

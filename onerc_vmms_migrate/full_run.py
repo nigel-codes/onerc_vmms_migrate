@@ -15,7 +15,7 @@ from frappe.utils import today
 from onerc_vmms_migrate import accounts, historical, load, run, workspace
 from onerc_vmms_migrate.crosswalk import Crosswalks
 from onerc_vmms_migrate.extract import extract
-from onerc_vmms_migrate.history_load import Loader
+from onerc_vmms_migrate.history_load import Loader, history_exclusion_counts, history_exclusions_accepted
 from onerc_vmms_migrate.silence import Guard, SilenceBreached, silenced
 from onerc_vmms_migrate.source import Source
 from onerc_vmms_migrate import transform
@@ -137,7 +137,8 @@ def execute(confirm=None, limit=None, progress=None):
             run._write_csv(report,'history-failures.csv',history['failures'])
             run._write_csv(report,'history-source-exclusions.csv',history['exclusions'])
             run._write_csv(report,'history-warnings.csv',history['warnings'])
-            result['history_exclusions_accepted']=not history['excluded_count'] or bool(conf.get('allow_source_exclusions') and history['excluded_count']/max(1,history['converted']+history['excluded_count'])<=0.01)
+            result['history']['exclusion_categories']=history_exclusion_counts(history)
+            result['history_exclusions_accepted']=history_exclusions_accepted(history, conf.get('allow_source_exclusions'))
             if progress:progress({'phase':'attachments'})
             result['attachments']=attachments(snapshot,source,run_id,dry_run=dry_run)
             # Missing bytes are visible even in a data-only local rehearsal.

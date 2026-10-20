@@ -27,7 +27,7 @@
    "fieldname": "allow_missing_history_dependencies",
    "fieldtype": "Check",
    "label": "Archive history with missing source dependencies",
-   "description": "Reviewed exception: retain and report operational history that requires a User or Terms of Reference absent from the capture. Never invent a coordinator or approval. Source-present records with unresolved mappings still block. Existing exclusion review and limits remain enforced."
+   "description": "Reviewed exception: retain and report history requiring a User, Employee or Terms of Reference absent from the capture, and standalone assignments without a deployment or structured TOR. Original records and file references remain archived. Never invent a person, scope or approval. Source-present unresolved mappings still block. New history gaps retain the 1% review limit; approved person exclusions are counted separately."
   },
   {
    "fieldname": "history_branch_overrides",

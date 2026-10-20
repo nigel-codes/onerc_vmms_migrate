@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.5 — 2026-10-20
+
+- Extend reviewed archive-only handling to history requiring absent Employees
+  and standalone assignments without a usable deployment or structured TOR.
+  Keep source records and original attachment references; never fabricate scope.
+- Report history cascading from approved source-person exclusions separately
+  from new history gaps. Keep source-person approval gates and the 1% limit for
+  new or unclassified history gaps, in both batch and full-run verification.
+- Missing Employee mappings still block when the Employee exists in the source,
+  or the source Employee identity index is unavailable. Attachment ownership and
+  missing-byte gates remain unchanged.
+
 ## 0.3.4 — 2026-10-20
 
 - Extend invalid-phone review to historical TOR stakeholder phones. Preserve

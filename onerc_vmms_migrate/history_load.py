@@ -23,6 +23,23 @@ class SourceIdentityExcluded(ValueError):
     pass
 
 
+PERSON_EXCLUSION = '[approved-person-exclusion] '
+
+
+def history_exclusion_counts(history):
+    """Count approved person fan-out separately; unclassified old notes stay gaps."""
+    person = sum(str(row.get('reason') or '').startswith(PERSON_EXCLUSION)
+                 for row in history['exclusions'])
+    return {'approved_person': person, 'history_gap': len(history['exclusions']) - person}
+
+
+def history_exclusions_accepted(history, approved):
+    counts = history_exclusion_counts(history)
+    total_excluded = counts['approved_person'] + counts['history_gap']
+    return not total_excluded or bool(approved and
+        counts['history_gap'] / max(1, history['converted'] + total_excluded) <= 0.01)
+
+
 class Loader:
     def __init__(self, snapshot, run_id, source, conf, dry_run=False):
         self.snapshot, self.run_id, self.source, self.conf = snapshot, run_id, source, conf
@@ -51,7 +68,9 @@ class Loader:
             return None
         name=str(name)
         if (doctype,name) in self.excluded_identities:
-            if required:raise SourceIdentityExcluded('Dependent source identity requires review; original record retained')
+            if required:
+                reason = getattr(self, 'excluded_reasons', {}).get((doctype, name))
+                raise SourceIdentityExcluded(reason or PERSON_EXCLUSION+'Dependent source identity requires review; original record retained')
             return None
         target=self.targets.get((doctype,name)) or self.by_source.get((doctype,name,target_dt or doctype))
         if not target:
@@ -59,8 +78,12 @@ class Loader:
         if not target and doctype in ('User','Currency','Country') and frappe.db.exists(doctype,name):
             target=name
         if not target and required:
-            if self.conf.get('allow_missing_history_dependencies') and doctype in ('User', 'Personnel Terms of Reference'):
-                present = name in self.snapshot.get('users', {}) if doctype == 'User' else self.history.get(doctype, name)
+            if self.conf.get('allow_missing_history_dependencies') and doctype in ('User', 'Employee', 'Personnel Terms of Reference'):
+                if doctype in ('User', 'Employee'):
+                    source = self.snapshot.get('users' if doctype == 'User' else 'employees')
+                    present = source is None or name in source
+                else:
+                    present = self.history.get(doctype, name)
                 if not present:
                     raise SourceIdentityExcluded('Required '+doctype+' is absent from the captured source: '+name+'; original dependent record retained in archive')
             raise ValueError('Unresolved '+doctype+' reference: '+str(name))
@@ -79,7 +102,7 @@ class Loader:
 
     def one(self, source_dt, row, target_dt, build, name=None):
         if (source_dt,row['name']) in self.excluded_identities:
-            reason = getattr(self, 'excluded_reasons', {}).get((source_dt, str(row['name']))) or 'Source identity requires review; original record retained'
+            reason = getattr(self, 'excluded_reasons', {}).get((source_dt, str(row['name']))) or PERSON_EXCLUSION+'Source identity requires review; original record retained'
             self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':reason})
             return None
         batched = getattr(self, 'batch_limit', None) is not None
@@ -275,6 +298,8 @@ class Loader:
                     # Some legacy assignments were standalone or their parent
                     # request was deleted. Retain a derived container only when
                     # the assignment's own recorded terms establish the scope.
+                    if not r.get('terms_of_reference') and self.conf.get('allow_missing_history_dependencies'):
+                        raise SourceIdentityExcluded('Standalone assignment has no usable deployment or structured TOR; original record and file references retained in archive')
                     terms=self.target('Personnel Terms of Reference',r.get('terms_of_reference'),'VMMS Terms of Reference')
                     original=self.history.get('Personnel Terms of Reference',r.get('terms_of_reference'))
                     if not original or not original.get('company'):

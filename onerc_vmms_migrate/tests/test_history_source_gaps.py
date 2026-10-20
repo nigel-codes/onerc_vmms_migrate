@@ -15,7 +15,7 @@ class TestHistorySourceGaps(TestCase):
 	def loader(self, enabled=True, source_present=False):
 		loader = object.__new__(Loader)
 		loader.conf = {"allow_missing_history_dependencies": enabled}
-		loader.snapshot = {"users": {}, "history": {}}
+		loader.snapshot = {"users": {}, "employees": {}, "history": {}}
 		if source_present:
 			loader.snapshot["history"]["tor"] = {
 				"doctype": "Personnel Terms of Reference",
@@ -141,3 +141,86 @@ class TestHistorySourceGaps(TestCase):
 			self.assertEqual(args[2]["conversion_status"], "Excluded")
 			self.assertNotIn("source_payload", args[2])
 			self.assertFalse(kwargs["update_modified"])
+
+	def test_absent_employee_needs_policy_and_complete_identity_index(self):
+		with patch.object(historical, "converted", return_value=None):
+			with self.assertRaises(SourceIdentityExcluded):
+				self.loader().target("Employee", "VOL-absent", "VMMS Volunteer")
+			for loader in (self.loader(False), self.loader()):
+				if loader.conf["allow_missing_history_dependencies"]:
+					loader.snapshot.pop("employees")
+				with self.assertRaises(ValueError) as raised:
+					loader.target("Employee", "VOL-absent", "VMMS Volunteer")
+				self.assertNotIsInstance(raised.exception, SourceIdentityExcluded)
+			loader = self.loader()
+			loader.snapshot["employees"]["VOL-present"] = {"name": "VOL-present"}
+			with self.assertRaises(ValueError) as raised:
+				loader.target("Employee", "VOL-present", "VMMS Volunteer")
+			self.assertNotIsInstance(raised.exception, SourceIdentityExcluded)
+
+	def test_unscoped_standalone_assignment_is_retained_only_with_review_policy(self):
+		for enabled in (False, True):
+			loader = self.loader(enabled)
+			loader.history = History(
+				{
+					"history": {
+						"assignment": {
+							"doctype": "Personnel Deployment Request",
+							"record": {
+								"name": "PDA-standalone",
+								"employee": "VOL-1",
+								"tor_attachment": "/private/files/terms.pdf",
+							},
+						}
+					}
+				}
+			)
+			loader.targets[("Employee", "VOL-1")] = "VOL-native"
+			builders = []
+			loader.one = lambda dt, row, target, build: builders.append((row, build))
+			loader.deployments()
+			row, build = builders[0]
+			with self.assertRaises(ValueError) as raised:
+				build(row)
+			self.assertEqual(isinstance(raised.exception, SourceIdentityExcluded), enabled)
+			self.assertEqual(row["tor_attachment"], "/private/files/terms.pdf")
+
+	def test_person_exclusion_reason_survives_dependency_propagation(self):
+		loader = self.loader()
+		loader.excluded_identities = {("Employee", "VOL-excluded"), ("Deployment Request Tool", "deployment")}
+		loader.excluded_reasons = {
+			("Deployment Request Tool", "deployment"): "[approved-person-exclusion] Missing native person"
+		}
+		with self.assertRaises(SourceIdentityExcluded) as raised:
+			loader.target("Employee", "VOL-excluded")
+		self.assertTrue(str(raised.exception).startswith("[approved-person-exclusion]"))
+		with self.assertRaises(SourceIdentityExcluded) as raised:
+			loader.target("Deployment Request Tool", "deployment")
+		self.assertTrue(str(raised.exception).startswith("[approved-person-exclusion]"))
+
+	def test_history_limit_counts_new_gaps_separately_from_approved_people(self):
+		from onerc_vmms_migrate.history_load import history_exclusion_counts
+
+		history = {
+			"exclusions": [
+				{"reason": "[approved-person-exclusion] Rejected source person"},
+				{"reason": "Required source TOR absent"},
+				{"reason": "[approved-person-exclusion] Dependent history"},
+			]
+		}
+		self.assertEqual(history_exclusion_counts(history), {"approved_person": 2, "history_gap": 1})
+
+	def test_history_approval_keeps_limit_for_new_and_unclassified_gaps(self):
+		from onerc_vmms_migrate.history_load import history_exclusions_accepted
+
+		history = {
+			"converted": 1000,
+			"exclusions": [
+				{"reason": "[approved-person-exclusion] Rejected source person"} for _ in range(250)
+			],
+		}
+		self.assertTrue(history_exclusions_accepted(history, True))
+		self.assertFalse(history_exclusions_accepted(history, False))
+		history["exclusions"].extend({"reason": "Missing source dependency"} for _ in range(20))
+		self.assertFalse(history_exclusions_accepted(history, True))
+		self.assertEqual(len(history["exclusions"]), 270)

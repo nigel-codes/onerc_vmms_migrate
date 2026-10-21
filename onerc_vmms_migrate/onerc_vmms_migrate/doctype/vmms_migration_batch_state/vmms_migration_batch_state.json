@@ -6,7 +6,8 @@
  "engine": "InnoDB",
  "field_order": [
   "checkpoint",
-  "attachment_checkpoint"
+  "attachment_checkpoint",
+  "date_repair_checkpoint"
  ],
  "fields": [
   {
@@ -20,6 +21,13 @@
    "fieldname": "attachment_checkpoint",
    "fieldtype": "Long Text",
    "label": "Trial attachment checkpoint",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "date_repair_checkpoint",
+   "fieldtype": "Long Text",
+   "label": "Historical date repair checkpoint",
    "read_only": 1,
    "hidden": 1
   }

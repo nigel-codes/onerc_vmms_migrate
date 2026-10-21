@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.3 — 2026-10-21
+
+- Preview and repair historical creation/joining dates on migration-created people,
+  accounts, memberships and applications without importing them again. Source
+  timestamps remain separate from joining dates, destination modifications and
+  the migration ledger. Preserve adopted records and report missing evidence.
+- Require review of an immutable before/after plan and a current backup. Commit
+  at most 1,000 records per server job, retain the cursor with its changes, and
+  stop if native records or ledger mappings change after preview. The existing
+  creation-based growth chart then reflects source registration history.
+
 ## 0.4.2 — 2026-10-21
 
 - Send attachment confirmation and reviewed-code checkboxes as JSON booleans,

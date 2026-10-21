@@ -232,6 +232,39 @@ and reviews **Allow missing files**. This exception preserves data and reports
 missing bytes; it cannot reconstruct them. A completed capture is not itself
 proof of a complete or successful native migration.
 
+## Historical registration and joining dates
+
+After a completed persistent test/import, keep cutover active and use
+**Historical dates → Preview historical dates**. This writes private
+`historical-dates-review.json`, `historical-dates-plan.json` (before/after values),
+and `historical-dates-held.csv` when there are exceptions. Preview does not change
+business records. Run site migration after deploying version 0.4.3 to install the
+independent date checkpoint.
+
+Review the plan and take a current database backup, then use **Repair reviewed
+dates**, confirm the backup/review checkbox, and type `REPAIR DATES`. Jobs commit
+at most 1,000 records at a time. **Pause date repair** finishes the current batch;
+**Resume date repair** continues the committed cursor. If a record changed since
+preview, the current batch rolls back and stops. Review the conflict and prepare
+a fresh preview if needed; earlier reports and committed repairs remain intact.
+
+The repair is limited to creation dates on migration-created Users, Red Profiles,
+Volunteers, Members, Memberships and Volunteer Applications, plus captured
+Volunteer/Member joining dates. Merged identities use their earliest supported
+source creation date. Joining dates are not substituted for record creation.
+A missing source joining date can clear a migration-day fallback; a different
+existing date is held for review. Missing or invalid creation evidence stays
+reported and unchanged. Adopted destination records are preserved.
+
+Native `modified`, ownership, login credentials, roles, attachment relationships
+and migration ledger timestamps are not rewritten. Original source owner and
+modification metadata remain in the restricted archive. No business save or
+activation hooks run during this repair. The current growth chart counts native
+creation dates, so restoring source creation dates removes the migration-day
+spike where evidence exists; it is still a registration trend, not proof of the
+date somebody first volunteered. Refresh the chart and run Reconcile again.
+Finished means the reviewed changes committed, not that missing dates were found.
+
 ## Updates and version qualification
 
 This release supports repeated captures **before** import. It is manually

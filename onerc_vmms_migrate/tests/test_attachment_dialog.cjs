@@ -11,7 +11,7 @@ const context = {
   csrf_token: 'test',
   ui: {form: {on: (_name, value) => {handlers = value;}},
    Dialog: class {constructor(options) {dialog = options;} show() {} hide() {}}},
-  call: async () => ({message: {attachment_batch: {status: 'review', plan_digest: 'reviewed'}}})
+  call: async () => ({message: {attachment_batch: {status: 'review', plan_digest: 'reviewed'}, date_repair: {status: 'review', plan_digest: 'dates-reviewed'}}})
  },
  fetch: async (_url, options) => {
   requests.push(JSON.parse(options.body));
@@ -40,5 +40,9 @@ const frm = {is_dirty: () => false, get_field: () => ({$wrapper: {html() {}}}),
  assert.equal(requests.at(-1).accept_code_changes, true);
  await dialog.primary_action({batch_size: 100, accept_code_changes: 0});
  assert.equal(requests.at(-1).accept_code_changes, false);
+ await buttons.get('Repair reviewed dates')();
+ await dialog.primary_action({backup_confirmed: 1, confirmation: 'REPAIR DATES'});
+ assert.equal(requests.at(-1).backup_confirmed, true);
+ assert.equal(requests.at(-1).plan_digest, 'dates-reviewed');
  console.log('PASS: attachment dialog serializes checked numeric controls as strict booleans.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

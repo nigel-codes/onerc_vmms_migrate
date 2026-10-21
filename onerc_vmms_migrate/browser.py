@@ -46,6 +46,9 @@ def lock_key():
 
 
 def assert_idle():
+	from onerc_vmms_migrate.date_repair_control import state as date_state
+	if (date_state() or {}).get("status") == "ready":
+		frappe.throw("Pause the historical date repair before changing migration inputs or restoring services.")
 	from onerc_vmms_migrate.batches import checkpoint
 	batch = checkpoint()
 	if batch and batch["status"] == "ready":
@@ -102,6 +105,8 @@ def status() -> dict:
 		value["batch"] = public_state(batch)
 	from onerc_vmms_migrate.trial_attachments import state as attachment_state, public as attachment_public
 	value["attachment_batch"] = attachment_public(attachment_state())
+	from onerc_vmms_migrate.date_repair_control import state as date_state, public as date_public
+	value["date_repair"] = date_public(date_state())
 	value["reports"] = []
 	reports = workspace.path("reports", "placeholder")
 	reports = os.path.dirname(reports)
@@ -160,6 +165,9 @@ def start(
 		batch_browser.assert_job_idle()
 		frappe.cache.delete(batch_browser.pause_key())
 		return batch_browser.queue(action, frappe.session.user, size)
+	from onerc_vmms_migrate.date_repair_control import state as date_state
+	if (date_state() or {}).get("status") == "ready":
+		frappe.throw("Pause the historical date repair before starting another migration action.")
 	token = uuid.uuid4().hex
 	if not frappe.cache.set(lock_key(), token, nx=True, ex=21600):
 		frappe.throw("A migration job is already queued or running.")

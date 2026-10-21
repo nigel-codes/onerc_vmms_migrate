@@ -110,6 +110,35 @@ frappe.ui.form.on('VMMS Migration Settings', {
     dialog.hide(); migration_status(frm);
    }}); dialog.show();
   }, __('Trial attachments'));
+  frm.add_custom_button(__('Preview historical dates'), async () => {
+   if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+   await migration_json('onerc_vmms_migrate.date_repair_control.prepare');
+   migration_status(frm);
+  }, __('Historical dates'));
+  frm.add_custom_button(__('Repair reviewed dates'), async () => {
+   if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+   const {message: current} = await frappe.call({method: migration_api + 'status'});
+   const plan = current.date_repair;
+   if (!plan || plan.status !== 'review') { frappe.msgprint(__('Preview historical dates and review the report first.')); return; }
+   const dialog = new frappe.ui.Dialog({title: __('Repair historical dates'), fields: [
+    {fieldtype: 'HTML', options: '<p>Review historical-dates-review.json and historical-dates-plan.json first. This repairs creation and joining dates on migration-created records using the captured source. Missing source dates are reported; migration-day joining fallbacks may be cleared to unknown. Existing destination records, ownership and modification timestamps are preserved. People and attachments are not imported again. Batches run on the server.</p>'},
+    {fieldname: 'backup_confirmed', fieldtype: 'Check', label: __('I have a current database backup and reviewed the date changes'), reqd: 1},
+    {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type REPAIR DATES'), reqd: 1}
+   ], primary_action_label: __('Repair dates'), primary_action: async values => {
+    await migration_json('onerc_vmms_migrate.date_repair_control.start', {
+     ...values, plan_digest: plan.plan_digest,
+     backup_confirmed: values.backup_confirmed === 1 || values.backup_confirmed === true
+    });
+    dialog.hide(); migration_status(frm);
+   }}); dialog.show();
+  }, __('Historical dates'));
+  frm.add_custom_button(__('Pause date repair'), async () => {
+   await migration_json('onerc_vmms_migrate.date_repair_control.pause'); migration_status(frm);
+  }, __('Historical dates'));
+  frm.add_custom_button(__('Resume date repair'), async () => {
+   if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+   await migration_json('onerc_vmms_migrate.date_repair_control.resume'); migration_status(frm);
+  }, __('Historical dates'));
   frm.add_custom_button(__('Import captured data'), async () => {
    const {message: state} = await frappe.call({method: migration_api + 'status'});
    const needs_email_test = !!state.rehearsal?.authentication_policy?.mail_delivery_test_required;
@@ -174,6 +203,14 @@ async function migration_status(frm) {
  if (state.cutover) html += '<div class="alert alert-warning">Cutover is active: scheduled jobs are paused and email is muted. Reconcile, then use Finish cutover to restore the original settings.</div>';
  if (state.result) html += `<pre style="max-height:360px;overflow:auto">${escape(JSON.stringify(state.result, null, 2))}</pre>`;
  if (state.rehearsal) html += `<p>Last full rehearsal: ${state.rehearsal.passed ? 'passed' : 'needs attention'}. Changes to the capture, mappings or settings require another rehearsal.</p>`;
+ if (state.date_repair) {
+  const dates = state.date_repair;
+  html += `<h5>Historical dates</h5><p>${escape(dates.status)} · ${escape(dates.offset)} / ${escape(dates.total)}</p>`;
+  if (dates.status === 'review') html += '<p>Review historical-dates-review.json and historical-dates-plan.json before using Repair reviewed dates. No business dates have changed yet.</p>';
+  if (dates.status === 'finished') html += '<p>Historical date repair finished. Refresh the growth chart and run Reconcile again. Held or unknown dates still need review.</p>';
+  if (dates.error) html += `<p>${escape(dates.error)}</p>`;
+  html += `<pre>${escape(JSON.stringify(dates.summary || {}, null, 2))}</pre>`;
+ }
  if (state.reports?.length) {
   html += '<h5>Reports</h5><ul>';
   for (const report of state.reports) {
@@ -187,7 +224,7 @@ async function migration_status(frm) {
   html += '</ul>';
  }
  frm.get_field('migration_dashboard').$wrapper.html(html);
- if (state.busy || state.batch?.status === 'ready' || state.attachment_batch?.status === 'ready') frm._migration_timer = setTimeout(() => {
+ if (state.busy || state.batch?.status === 'ready' || state.attachment_batch?.status === 'ready' || state.date_repair?.status === 'ready') frm._migration_timer = setTimeout(() => {
   if (cur_frm === frm) migration_status(frm);
  }, 4000);
  else if (state.action === 'capture' && state.status === 'finished' && state.result?.capture_id !== frm.doc.browser_capture) frm.reload_doc();

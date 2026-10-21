@@ -171,6 +171,9 @@ def pause_key():
 
 @contextmanager
 def control_lock():
+	from onerc_vmms_migrate.date_repair_control import state as date_state
+	if (date_state() or {}).get("status") == "ready":
+		raise ValueError("Pause the historical date repair before controlling attachment copying.")
 	batch_browser.assert_job_idle()
 	token = batch_browser.reserve_lock()
 	try:
@@ -238,6 +241,7 @@ def prepare():
 	if not frappe.get_meta(batches.DOCTYPE).has_field(FIELD):
 		raise ValueError("Run the site migration to install trial attachment checkpoint storage.")
 	batch_browser.assert_job_idle()
+	browser.assert_idle()
 	qualified(workspace.config())
 	old = state()
 	if old and old["status"] in ("ready", "paused", "blocked") and old.get("copy_authorized"):

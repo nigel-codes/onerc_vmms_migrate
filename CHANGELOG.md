@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 — 2026-10-21
+
+- Send attachment confirmation and reviewed-code checkboxes as JSON booleans,
+  matching the strict copy/resume endpoints. Checked Frappe controls return numeric
+  values; previously the copy dialog rejected valid operator confirmations.
+
 ## 0.4.1 — 2026-10-21
 
 - Limit attachment planning to converted identities and referenced archive parent

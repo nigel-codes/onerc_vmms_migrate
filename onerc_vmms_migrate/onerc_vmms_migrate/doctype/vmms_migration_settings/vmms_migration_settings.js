@@ -86,7 +86,12 @@ frappe.ui.form.on('VMMS Migration Settings', {
     {fieldname: 'batch_size', fieldtype: 'Int', label: __('Files per job (1–1000)'), default: 100, reqd: 1},
     {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type COPY FILES'), reqd: 1}
    ], primary_action_label: __('Copy files'), primary_action: async values => {
-    await migration_json('onerc_vmms_migrate.trial_attachments.start', {...values, plan_digest: plan.plan_digest});
+    await migration_json('onerc_vmms_migrate.trial_attachments.start', {
+     ...values, plan_digest: plan.plan_digest,
+     backup_confirmed: values.backup_confirmed === 1 || values.backup_confirmed === true,
+     test_destination: values.test_destination === 1 || values.test_destination === true,
+     review_confirmed: values.review_confirmed === 1 || values.review_confirmed === true
+    });
     dialog.hide(); migration_status(frm);
    }}); dialog.show();
   }, __('Trial attachments'));
@@ -99,7 +104,9 @@ frappe.ui.form.on('VMMS Migration Settings', {
     {fieldname: 'accept_code_changes', fieldtype: 'Check', label: __('I reviewed deployed code changes since the attachment plan'), description: __('The capture, settings, mappings and saved plan must remain unchanged.')}
    ], primary_action_label: __('Resume'), primary_action: async values => {
     if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
-    await migration_json('onerc_vmms_migrate.trial_attachments.resume', values);
+    await migration_json('onerc_vmms_migrate.trial_attachments.resume', {
+     ...values, accept_code_changes: values.accept_code_changes === 1 || values.accept_code_changes === true
+    });
     dialog.hide(); migration_status(frm);
    }}); dialog.show();
   }, __('Trial attachments'));

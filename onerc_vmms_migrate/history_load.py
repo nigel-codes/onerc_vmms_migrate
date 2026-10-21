@@ -10,7 +10,7 @@ from collections import Counter
 
 import frappe
 
-from onerc_vmms_migrate import historical, normalise
+from onerc_vmms_migrate import historical, normalise, presentation
 from onerc_vmms_migrate.crosswalk import Crosswalks, UNMAPPED, DROP
 from onerc_vmms_migrate.history_model import History, assignment_state, application_state, key, split_name
 
@@ -259,7 +259,7 @@ class Loader:
                     'expected_start_date':r.get('expected_start_date'),'expected_end_date':r.get('expected_end_date'),
                     'mission_background':r.get('mission_background'),'approval_mode':'direct',
                     'docstatus':int(r.get('docstatus') or 0),'approval_state':{'Approved':'Approved','Draft':'Draft','Pending Approval':'Submitted'}.get(r.get('workflow_state'),'Draft'),
-                    'notes':'Imported legacy terms; original wording and state retained in Legacy VMMS Document.'}
+                    'notes':r.get('notes') or ''}
                 for field,(child_dt,required_field) in child_map.items():
                     target_child=frappe.get_meta('VMMS Terms of Reference').get_field(field).options
                     target_meta=frappe.get_meta(target_child)
@@ -306,7 +306,7 @@ class Loader:
                             'expected_start_date':r.get('expected_start_date'),'expected_end_date':r.get('expected_end_date'),
                             'approval_mode':'direct','approval_state':'Draft','legacy_unstructured_terms':1,
                             'legacy_terms_url':r.get('tor_url'),
-                            'notes':'Legacy terms were supplied as a file or URL. Original structured wording and approval were not recorded. This draft is retained as evidence and is inactive for new work.'}).name
+                            'notes':presentation.FILE_TERMS_NOTE}).name
                 else:
                     raise ValueError('Legacy deployment has neither structured terms nor an original terms document')
                 coordinator=self.target('User',r.get('owner'))
@@ -314,7 +314,7 @@ class Loader:
                     'coordinator':coordinator,'status':'Planned','volunteers_required':r.get('number_of_volunteers_required'),
                     'planned_start':r.get('expected_start_date'),'planned_end':r.get('expected_end_date'),
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
-                    'notes':(r.get('notes') or '')+'\nImported legacy deployment; no lifecycle status was recorded. Planned is the destination default.'}
+                    'notes':(r.get('notes') or '')+presentation.DEPLOYMENT_SUFFIX}
             self.one('Deployment Request Tool',row,'VMMS Deployment',build)
         for row in self.history.rows('Personnel Deployment Request'):
             def build(r):
@@ -337,7 +337,7 @@ class Loader:
                             'coordinator':self.target('User',r.get('owner')),'status':'Planned',
                             'volunteers_required':1,'planned_start':r.get('expected_start_date'),
                             'planned_end':r.get('expected_end_date'),
-                            'notes':'Derived historical container for legacy assignment '+r['name']+'. The original parent deployment was absent. Dates and scope come from its recorded assignment and terms; Planned is the destination default.'},name=name)
+                            'notes':presentation.ASSIGNMENT_NOTE},name=name)
                     deployment=name
                 d=frappe.get_doc('VMMS Deployment',deployment)
                 terms=self.target('Personnel Terms of Reference',r.get('terms_of_reference'),'VMMS Terms of Reference',required=False) or d.terms_of_reference

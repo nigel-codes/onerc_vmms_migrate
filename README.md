@@ -232,6 +232,26 @@ and reviews **Allow missing files**. This exception preserves data and reports
 missing bytes; it cannot reconstruct them. A completed capture is not itself
 proof of a complete or successful native migration.
 
+## Historical approval presentation
+
+A recorded source Approved/Rejected status is preserved as status, not fabricated
+as an Administrator decision. The receiver does not create a decision event when
+an original approver and decision date are unavailable. Source originals and
+migration provenance remain in restricted archive/ledger records, not the ordinary
+approval timeline. Genuine native approval decisions remain unchanged.
+
+Version 0.4.4 runs `repair_generated_presentation` during site migration. Finish
+or pause date/attachment jobs first, preserve a current backup, then deploy and
+migrate. The patch matches exact old generated markers on migration-created
+applications and memberships, exports their full rows in private
+`presentation-repair-before.json`, then removes those synthetic events. It clears
+only generated stage labels, never approval state. `presentation-repair-result.json`
+reports counts and exceptions. Read the patch log to confirm the transaction
+committed. Generated terms/deployment notes are rewritten without migration
+branding while factual gaps remain explicit. Original user notes are preserved.
+If a date plan was previewed before deployment but not applied, preview it again
+afterwards because the code fingerprint changed. Run Reconcile after the repairs.
+
 ## Historical registration and joining dates
 
 After a completed persistent test/import, keep cutover active and use

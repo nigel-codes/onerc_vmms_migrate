@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.4 — 2026-10-21
+
+- Carry recorded approval statuses without inventing Administrator decisions or
+  displaying migration commentary as an approval event. Original source audit
+  evidence and the migration ledger remain private and unchanged.
+- A site migration patch exports a private audit before removing only the exact
+  generated approval rows on migration-created applications/memberships. Genuine
+  decisions, states and modification timestamps remain unchanged; conflicts are
+  reported. Replace generated terms/deployment notes with neutral factual wording.
+- Finish or pause an active date/attachment repair before deploying this update.
+
 ## 0.4.3 — 2026-10-21
 
 - Preview and repair historical creation/joining dates on migration-created people,

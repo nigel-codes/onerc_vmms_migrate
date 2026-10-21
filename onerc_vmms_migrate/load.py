@@ -8,7 +8,7 @@ and grants the society's self-service roles.
 **Where this goes around vmmsx, and why each detour is safe.**
 
 * *The volunteer's application is inserted as a Draft that already names its
-  volunteer, then marked Approved with one decision row written directly.* Going
+  volunteer, then marked Approved from the recorded source status.* Going
   through the approval engine would re-run today's approval gate (an emergency
   contact, a verified guardian) against a decision the society made years ago
   under different rules. vmmsx's own `validate_approval` docstring says an old
@@ -21,14 +21,14 @@ and grants the society's self-service roles.
 
 Everything else goes through vmmsx's services: `volunteer.ensure`,
 `member.ensure`, `refresh()` and `token.ensure`. The records therefore carry
-exactly what the product would have written.
+the product's native links and roles without inventing historical actors.
 """
 
 import os
 from copy import deepcopy
 
 import frappe
-from frappe.utils import get_datetime, now_datetime
+from frappe.utils import now_datetime
 
 from onerc_vmms_migrate.silence import Guard
 
@@ -63,9 +63,6 @@ PROFILE_TABLES = (
 	"vmms_licences",
 	"vmms_driving_licences",
 )
-
-IMPORT_STAGE = "legacy-import"
-IMPORT_STAGE_LABEL = "Imported from onerc_vmms"
 
 
 def already_migrated(key: str) -> dict | None:
@@ -432,13 +429,7 @@ def _volunteer(ctx, profile: str) -> str:
 	)
 	app.insert(ignore_permissions=True)
 
-	decided_on = get_datetime(data["joined_on"] or application["applied_on"] or now_datetime())
-	_mark_approved(
-		app,
-		decided_on,
-		f"Approved in onerc_vmms before migration ({application['source_doctype']} "
-		f"{application['source_name']}, Employee {data['source_name']}).",
-	)
+	_mark_approved(app)
 	_ledger(
 		ctx, application["source_doctype"], application["source_name"], "VMMS Volunteer Application", app.name
 	)
@@ -456,34 +447,14 @@ def _answer(row: dict) -> dict:
 	}
 
 
-def _mark_approved(doc, decided_on, reason: str) -> None:
-	"""Record a decision made in the old system, without re-deciding it today."""
+def _mark_approved(doc) -> None:
+	"""Carry the source status without inventing an approver, decision date or audit row."""
 	frappe.db.set_value(
 		doc.doctype,
 		doc.name,
-		{
-			"approval_state": "Approved",
-			"approval_stage": IMPORT_STAGE_LABEL,
-			"approval_stage_entered_on": decided_on,
-		},
+		{"approval_state": "Approved", "approval_stage": "", "approval_stage_entered_on": None},
 		update_modified=False,
 	)
-	frappe.get_doc(
-		{
-			"doctype": "VMMS Approval Decision",
-			"parent": doc.name,
-			"parenttype": doc.doctype,
-			"parentfield": "approval_decisions",
-			"idx": 1,
-			"stage_sequence": 0,
-			"stage": IMPORT_STAGE,
-			"stage_label": IMPORT_STAGE_LABEL,
-			"approver": "Administrator",
-			"decision": "Approved",
-			"decided_on": decided_on,
-			"reason": reason,
-		}
-	).db_insert()
 
 
 # --- member ---------------------------------------------------------------------
@@ -529,23 +500,6 @@ def _member(ctx, profile: str) -> str:
 		doc.validate()
 		doc = insert("VMMS Membership", values)
 
-		if row.get("approval_state", "Approved") in ("Approved", "Rejected"):
-			frappe.get_doc(
-				{
-					"doctype": "VMMS Approval Decision",
-					"parent": doc.name,
-					"parenttype": doc.doctype,
-					"parentfield": "approval_decisions",
-					"idx": 1,
-					"stage_sequence": 0,
-					"stage": IMPORT_STAGE,
-					"stage_label": IMPORT_STAGE_LABEL,
-					"approver": "Administrator",
-					"decision": row.get("approval_state", "Approved"),
-					"decided_on": now_datetime(),
-					"reason": f"Recorded historical status in onerc_vmms; this timestamp records the import, not the original decision (VM Membership {row['source_name']}).",
-				}
-			).db_insert()
 		_ledger(ctx, "VM Membership", row["source_name"], "VMMS Membership", doc.name)
 
 	return member.name

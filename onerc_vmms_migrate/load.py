@@ -19,9 +19,9 @@ and grants the society's self-service roles.
   `try_activate()` a no-op (Active is not activatable) and keeps the dates.
 * *Nothing is sent.* See `silence.py`.
 
-Everything else goes through vmmsx's services: `volunteer.ensure`,
-`member.ensure`, `refresh()` and `token.ensure`. The records therefore carry
-the product's native links and roles without inventing historical actors.
+Volunteer/member creation uses normal native inserts with explicit source names.
+Native `refresh()` and `token.ensure` retain product links and roles. An existing
+different destination number is a review conflict, never silently adopted.
 """
 
 import os
@@ -390,17 +390,19 @@ def _copy_file(ctx, url: str, doctype: str, name: str, private: bool) -> str | N
 
 def _volunteer(ctx, profile: str) -> str:
 	from vmmsx.volunteer.services import volunteer as volunteer_service
+	from onerc_vmms_migrate.identity import assert_same_name, create
 
 	data = ctx["bundle"]["volunteer"]
 	application = ctx["bundle"]["application"]
 
 	existing = frappe.db.get_value("VMMS Volunteer", {"red_profile": profile})
 	if existing:
+		assert_same_name(existing, [data["source_name"]])
 		ctx["warnings"].append(f"already a volunteer here ({existing}); old record linked, nothing changed")
 		_ledger(ctx, "Employee", data["source_name"], "VMMS Volunteer", existing, "adopted")
 		return existing
 
-	volunteer = volunteer_service.ensure(profile, data["home_geo_node"])
+	volunteer = create("VMMS Volunteer", profile, [data["source_name"]], {"home_geo_node": data["home_geo_node"]})
 	volunteer.joined_on = data["joined_on"]
 	volunteer.set("skills", [{"skill": s} for s in data["skills"]])
 	volunteer.set("languages", [{"language": lang} for lang in data["languages"]])
@@ -461,12 +463,21 @@ def _mark_approved(doc) -> None:
 
 
 def _member(ctx, profile: str) -> str:
-	from vmmsx.member.services import member as member_service
+	from onerc_vmms_migrate.identity import assert_same_name, create, original_name
 
 	bundle = ctx["bundle"]
 	data = bundle["member"]
 
-	member = member_service.ensure(profile)
+	source_name = original_name(data["source_names"])
+	existing = frappe.db.get_value("VMMS Member", {"red_profile": profile}, "name")
+	if existing:
+		assert_same_name(existing, data["source_names"])
+		member = frappe.get_doc("VMMS Member", existing)
+	else:
+		meta = frappe.get_meta("VMMS Member")
+		values = {field: value for field, value in {"legacy_member_id": source_name, "customer": data.get("customer")}.items()
+		          if meta.has_field(field) and value is not None}
+		member = create("VMMS Member", profile, data["source_names"], values)
 	if data["joined_on"] and not member.joined_on:
 		member.db_set("joined_on", data["joined_on"], update_modified=False)
 	for source_name in data["source_names"]:
@@ -496,9 +507,16 @@ def _member(ctx, profile: str) -> str:
 		# automation on Draft or Pending historical memberships.
 		from onerc_vmms_migrate.historical import insert
 		values = {k:v for k,v in doc.as_dict().items() if k not in ("doctype", "name")}
+		meta = frappe.get_meta("VMMS Membership")
+		for field, value in {"legacy_membership_id": row["source_name"], "amount": row.get("amount"),
+		                     "currency": row.get("currency"), "member_since_date": row.get("member_since_date"),
+		                     "fee_snapshot_taken": int(row.get("amount") is not None)}.items():
+			if meta.has_field(field) and value is not None:
+				values[field] = value
+		doc.update(values)
 		doc._action = "save"
 		doc.validate()
-		doc = insert("VMMS Membership", values)
+		doc = insert("VMMS Membership", values, name=row["source_name"])
 
 		_ledger(ctx, "VM Membership", row["source_name"], "VMMS Membership", doc.name)
 

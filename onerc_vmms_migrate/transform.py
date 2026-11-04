@@ -832,6 +832,9 @@ def _member(b, members, snapshot, cw, conf, today) -> None:
 		b["memberships"].append(
 			{
 				"source_name": membership["name"],
+				"amount": membership.get("amount"),
+				"currency": membership.get("currency"),
+				"member_since_date": normalise.date(membership.get("member_since_date")),
 				"membership_type": membership_type,
 				"geo_node": geo,
 				"membership_status": new_status,
@@ -847,6 +850,8 @@ def _member(b, members, snapshot, cw, conf, today) -> None:
 	# A member is a person even when no historical membership is Active/Expired.
 	# Preserve their identity without inventing payment, approval or joining dates.
 	b["member"] = {"source_names": sorted(names), "joined_on": min(joined) if joined else None}
+	if len(members) == 1 and members[0].get("customer"):
+		b["member"]["customer"] = members[0]["customer"]
 
 
 def _flag_shared_identifiers(bundles: list[dict]) -> None:

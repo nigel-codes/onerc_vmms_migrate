@@ -271,13 +271,15 @@ def _exercise(expect) -> None:
 	expect("account and person phases share one source login mapping",frappe.db.count(loader.LEDGER,{"source_doctype":"User","source_name":amina,"target_doctype":"User"}),1)
 	a = written[amina]
 	vol = frappe.get_doc("VMMS Volunteer", a["volunteer"])
+	expect("original volunteer number is retained", vol.name, "SELFTEST-E1")
+	expect("original member number is retained", a["member"], "SELFTEST-M1")
 	expect("volunteer is Active (derived from the imported approval)", vol.status, "Active")
 	expect("volunteer keeps joined_on", str(vol.joined_on), "2021-03-01")
 	expect("volunteer has a card token", bool(vol.card_token), True)
 	app = frappe.get_all("VMMS Volunteer Application", {"volunteer": vol.name}, ["name", "approval_state"])[0]
 	expect("application is Approved", app.approval_state, "Approved")
 	stages = frappe.get_all("VMMS Approval Decision", {"parent": app.name}, pluck="stage")
-	expect("decision recorded as an import", stages, [loader.IMPORT_STAGE])
+	expect("historical approval does not invent decision rows", stages, [])
 	user = frappe.get_doc("User", amina)
 	expect("login is a portal user", user.user_type, "Website User")
 	expect("old password still works", bool(check_password(amina, PASSWORD)), True)
@@ -298,8 +300,10 @@ def _exercise(expect) -> None:
 	membership = frappe.get_all(
 		"VMMS Membership",
 		{"member": a["member"]},
-		["membership_status", "valid_from", "payment_receipt", "card_token"],
+		["name", "naming_series", "membership_status", "valid_from", "payment_receipt", "card_token"],
 	)[0]
+	expect("original membership number is retained", membership.name, "SELFTEST-MS1")
+	expect("required membership series is populated", bool(membership.naming_series), True)
 	expect("membership stays Active", membership.membership_status, "Active")
 	expect(
 		"membership keeps its start date",

@@ -1,0 +1,276 @@
+{
+ "doctype": "DocType",
+ "name": "Legacy M-Pesa Payment",
+ "module": "onerc_vmms Migrate",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "index_web_pages_for_search": 0,
+ "fields": [
+  {
+   "fieldname": "source_id",
+   "fieldtype": "Data",
+   "label": "Source Id",
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Data",
+   "label": "Source Doctype",
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "label": "Source Name",
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Snapshot Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_hash",
+   "fieldtype": "Data",
+   "label": "Source Hash",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "run_id",
+   "fieldtype": "Data",
+   "label": "Run Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_owner",
+   "fieldtype": "Data",
+   "label": "Source Owner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_modified_by",
+   "fieldtype": "Data",
+   "label": "Source Modified By",
+   "read_only": 1
+  },
+  {
+   "fieldname": "direction",
+   "fieldtype": "Data",
+   "label": "Direction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "evidence_kind",
+   "fieldtype": "Data",
+   "label": "Evidence Kind",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_status",
+   "fieldtype": "Data",
+   "label": "Original Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Data",
+   "label": "Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Data",
+   "label": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "receipt_number",
+   "fieldtype": "Data",
+   "label": "Receipt Number",
+   "read_only": 1,
+   "search_index": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "checkout_request_id",
+   "fieldtype": "Data",
+   "label": "Checkout Request Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "merchant_request_id",
+   "fieldtype": "Data",
+   "label": "Merchant Request Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "conversation_id",
+   "fieldtype": "Data",
+   "label": "Conversation Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "originator_conversation_id",
+   "fieldtype": "Data",
+   "label": "Originator Conversation Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reference_doctype",
+   "fieldtype": "Data",
+   "label": "Source Reference Doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reference_name",
+   "fieldtype": "Data",
+   "label": "Source Reference Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_payment_entry",
+   "fieldtype": "Data",
+   "label": "Source Payment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_company",
+   "fieldtype": "Data",
+   "label": "Source Company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "party_phone",
+   "fieldtype": "Data",
+   "label": "Party Phone",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_code",
+   "fieldtype": "Data",
+   "label": "Result Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_creation",
+   "fieldtype": "Datetime",
+   "label": "Source Creation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Datetime",
+   "label": "Source Modified",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transaction_on",
+   "fieldtype": "Datetime",
+   "label": "Transaction On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_docstatus",
+   "fieldtype": "Int",
+   "label": "Source Docstatus",
+   "read_only": 1
+  },
+  {
+   "fieldname": "account_reference",
+   "fieldtype": "Small Text",
+   "label": "Account Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "result_description",
+   "fieldtype": "Small Text",
+   "label": "Result Description",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_payload",
+   "fieldtype": "Code",
+   "label": "Source Payload",
+   "read_only": 1,
+   "options": "JSON",
+   "reqd": 1
+  },
+  {
+   "fieldname": "mapping_status",
+   "fieldtype": "Select",
+   "label": "Mapping Status",
+   "read_only": 1,
+   "options": "Unresolved\nReviewed",
+   "default": "Unresolved"
+  },
+  {
+   "fieldname": "allocations",
+   "fieldtype": "Table",
+   "label": "Allocations",
+   "read_only": 1,
+   "options": "Legacy Payment Allocation"
+  }
+ ],
+ "field_order": [
+  "source_id",
+  "source_doctype",
+  "source_name",
+  "snapshot_id",
+  "source_hash",
+  "run_id",
+  "source_owner",
+  "source_modified_by",
+  "direction",
+  "evidence_kind",
+  "original_status",
+  "amount",
+  "currency",
+  "receipt_number",
+  "checkout_request_id",
+  "merchant_request_id",
+  "conversation_id",
+  "originator_conversation_id",
+  "source_reference_doctype",
+  "source_reference_name",
+  "source_payment_entry",
+  "source_company",
+  "party_phone",
+  "result_code",
+  "source_creation",
+  "source_modified",
+  "transaction_on",
+  "source_docstatus",
+  "account_reference",
+  "result_description",
+  "source_payload",
+  "mapping_status",
+  "allocations"
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ],
+ "track_changes": 1,
+ "istable": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

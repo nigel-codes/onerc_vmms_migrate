@@ -12,7 +12,7 @@ import uuid
 import frappe
 from frappe.utils import now_datetime
 
-from onerc_vmms_migrate.history_model import canonical, key
+from onerc_vmms_migrate.history_model import archive_users, canonical, key
 
 ARCHIVE = 'Legacy VMMS Document'
 ALLOWED = {'VMMS Membership', 'VMMS Volunteer Application', 'VMMS Terms of Reference',
@@ -97,7 +97,9 @@ def archive(snapshot, run_id, records=None):
     imported_on=now_datetime()
     from itertools import chain
     if records is None:
-        records = chain(snapshot.get('history', {}).values(), ({'doctype':'User','record':u} for u in snapshot.get('users',{}).values()))
+        records = chain(snapshot.get('history', {}).values(), ({'doctype':'User','record':u} for u in archive_users(snapshot).values()))
+    from onerc_vmms_migrate import legacy_payments
+    payment_rows = []
     total = 0
     def flush():
         nonlocal reused, created
@@ -112,6 +114,8 @@ def archive(snapshot, run_id, records=None):
     for item in records:
         total += 1
         dt, row = item['doctype'], item['record']
+        if dt in legacy_payments.TYPES:
+            payment_rows.append(item)
         payload = canonical(row)
         digest = hashlib.sha256(payload.encode()).hexdigest()
         record_id = archive_id(source_id, dt, row['name'])
@@ -122,8 +126,11 @@ def archive(snapshot, run_id, records=None):
             digest,payload,run_id,'Retained',imported_on,row.get('parenttype'),row.get('parent'),row.get('parentfield')))
         if len(pending)>=1000:
             flush()
+            legacy_payments.retain(snapshot, run_id, payment_rows)
+            payment_rows = []
             pending=[]
     if pending:flush()
+    if payment_rows:legacy_payments.retain(snapshot, run_id, payment_rows)
     return {'created': created, 'reused': reused, 'total': total}
 
 

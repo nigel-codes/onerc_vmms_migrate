@@ -97,10 +97,11 @@ def history_page(snapshot, start, size):
 
 
 def archive_page(snapshot, start, size):
+	from onerc_vmms_migrate.history_model import archive_users
 	history_total = len(snapshot.get("history", {}))
 	result = history_page(snapshot, start, size) if start < history_total else []
 	if len(result) < size:
-		users = snapshot.get("users", {})
+		users = archive_users(snapshot)
 		user_start = max(0, start - history_total)
 		result.extend(
 			{"doctype": "User", "record": users[key]}
@@ -235,6 +236,8 @@ def work(snapshot, source, conf, value, progress):
 		return time.monotonic() >= deadline
 
 	if phase == "preflight":
+		from onerc_vmms_migrate.continuity import require_capture
+		require_capture(snapshot)
 		from onerc_vmms_migrate import run
 		from onerc_vmms_migrate.crosswalk import Crosswalks
 
@@ -258,9 +261,10 @@ def work(snapshot, source, conf, value, progress):
 		summary["native_phones_requiring_review"] = len(invalid)
 		return 1, 1, failures, summary
 	if phase == "archive":
+		from onerc_vmms_migrate.history_model import archive_users
 		rows = archive_page(snapshot, start, size)
 		summary = historical.archive(snapshot, value["run_id"], records=rows)
-		return len(rows), len(snapshot["history"]) + len(snapshot["users"]), [], summary
+		return len(rows), len(snapshot["history"]) + len(archive_users(snapshot)), [], summary
 	if phase == "accounts":
 		keys = sorted(snapshot["users"])[start : start + size]
 		part = {**snapshot, "users": {key: snapshot["users"][key] for key in keys}}

@@ -50,6 +50,7 @@ class TestBatchCheckpoint(TestCase):
 		from onerc_vmms_migrate.crosswalk import Crosswalks
 
 		cw = MagicMock()
+		snapshot = {"source": {"continuity": {"version": 1, "tables": {}}}}
 		cw.problems.return_value = [
 			{
 				"kind": "profession",
@@ -64,7 +65,7 @@ class TestBatchCheckpoint(TestCase):
 			patch.object(run, "_report_plan", return_value={}),
 		):
 			_, _, failures, summary = batches.work(
-				{}, None, {}, {"phase": "preflight", "offset": 0, "batch_size": 1000, "run_id": "test"}, None
+				snapshot, None, {}, {"phase": "preflight", "offset": 0, "batch_size": 1000, "run_id": "test"}, None
 			)
 		self.assertEqual(len(failures), 1)
 		self.assertEqual(failures[0]["kind"], "profession")
@@ -79,16 +80,17 @@ class TestBatchCheckpoint(TestCase):
 			"bundles": [{"key": "person", "errors": [], "profile": {"phone": "+2542049963400719047340"}}]
 		}
 		value = {"phase": "preflight", "offset": 0, "batch_size": 1000, "run_id": "test"}
+		snapshot = {"source": {"continuity": {"version": 1, "tables": {}}}}
 		with (
 			patch.object(batches, "build", return_value=built),
 			patch.object(Crosswalks, "read"),
 			patch.object(run, "_report_plan", side_effect=lambda *args: {}),
 		):
-			processed, total, failures, summary = batches.work({}, None, {}, value, None)
+			processed, total, failures, summary = batches.work(snapshot, None, {}, value, None)
 			self.assertEqual((processed, total, len(failures)), (1, 1, 1))
 			self.assertEqual(summary["native_phones_requiring_review"], 1)
 			_processed, _total, reviewed, _summary = batches.work(
-				{}, None, {"drop_invalid_phones": True}, value, None
+				snapshot, None, {"drop_invalid_phones": True}, value, None
 			)
 			self.assertFalse(reviewed)
 

@@ -6,6 +6,7 @@ import frappe
 
 from onerc_vmms_migrate import historical, normalise, run, workspace
 from onerc_vmms_migrate.source import Source
+from onerc_vmms_migrate.history_model import archive_users
 
 
 def verify(snapshot):
@@ -17,8 +18,8 @@ def verify(snapshot):
     failures=[]
     from itertools import chain
     def expected_records():
-        return chain(snapshot['history'].values(),({'doctype':'User','record':u} for u in snapshot['users'].values()))
-    total=len(snapshot['history'])+len(snapshot['users'])
+        return chain(snapshot['history'].values(),({'doctype':'User','record':u} for u in archive_users(snapshot).values()))
+    total=len(snapshot['history'])+len(archive_users(snapshot))
     import hashlib
     from onerc_vmms_migrate.history_model import canonical
     for item in expected_records():
@@ -60,6 +61,9 @@ def verify(snapshot):
         'passwords_checked':passwords_checked,'passwords_without_native_account':passwords_without_native_account,'mismatches':len(failures),'native_coverage':coverage(snapshot),
         'people_checked':frappe.db.count('Legacy Migration Record',{'person_key':('not like','account:%')}),
         'accounts_expected':len(snapshot['users'])}
+    from onerc_vmms_migrate.legacy_payments import verify as verify_payments
+    failures.extend(verify_payments(snapshot))
+    summary['mismatches'] = len(failures)
     return summary, failures
 
 

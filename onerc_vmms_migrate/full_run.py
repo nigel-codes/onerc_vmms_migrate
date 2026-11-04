@@ -60,6 +60,8 @@ def execute(confirm=None, limit=None, progress=None):
     try:
         with Source(conf) as source, silenced():
             snapshot=extract(source)
+            from onerc_vmms_migrate.continuity import require_capture
+            require_capture(snapshot)
             if not snapshot.get('schemas') or not snapshot.get('history'):
                 frappe.throw('This capture has no complete VMMS/Buzz history. Update both apps and capture again.')
             if snapshot.get('capture_complete') is False and not dry_run and not conf.get('allow_missing_files'):

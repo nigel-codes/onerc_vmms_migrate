@@ -1,0 +1,94 @@
+{
+ "doctype": "DocType",
+ "name": "Legacy Payment Allocation",
+ "module": "onerc_vmms Migrate",
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "index_web_pages_for_search": 0,
+ "fields": [
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Data",
+   "label": "Source Doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "label": "Source Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_payment_entry",
+   "fieldtype": "Data",
+   "label": "Source Payment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reference_doctype",
+   "fieldtype": "Data",
+   "label": "Source Reference Doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reference_name",
+   "fieldtype": "Data",
+   "label": "Source Reference Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_membership",
+   "fieldtype": "Data",
+   "label": "Source Membership",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_amount",
+   "fieldtype": "Data",
+   "label": "Allocated Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Data",
+   "label": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Data",
+   "label": "Target Doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_name",
+   "fieldtype": "Data",
+   "label": "Target Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note",
+   "read_only": 1
+  }
+ ],
+ "field_order": [
+  "source_doctype",
+  "source_name",
+  "source_payment_entry",
+  "source_reference_doctype",
+  "source_reference_name",
+  "source_membership",
+  "allocated_amount",
+  "currency",
+  "target_doctype",
+  "target_name",
+  "review_note"
+ ],
+ "permissions": [],
+ "track_changes": 0,
+ "istable": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

@@ -8,6 +8,11 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), default=str)
 
 
+def archive_users(snapshot):
+    """Older captures need person Users; full-history captures already contain them."""
+    return {} if 'User' in snapshot.get('schemas', {}) else snapshot.get('users', {})
+
+
 def key(doctype, name):
     return hashlib.sha256((str(doctype) + '\0' + str(name)).encode()).hexdigest()
 

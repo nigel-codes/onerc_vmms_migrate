@@ -1,4 +1,6 @@
-# VMMS migration receiver — 0.3.1
+# VMMS migration receiver — 0.5.0
+
+See [PREPARATION_STATUS.md](PREPARATION_STATUS.md) for the continuity work prepared on 4 November 2026, verification scope and the remaining cutover requirements. This code has not been installed or run against kenyaredcross.localhost. Historical payment allocations and legacy history presentation still require review/integration.
 
 Install on the **new Redhive site**, alongside `erpnext`, `onerc_core`, `vmmsx` and `buzz`.
 Install companion `onerc_vmms_export` on the **old v15 VMMS site**.

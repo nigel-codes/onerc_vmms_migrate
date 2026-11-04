@@ -42,3 +42,25 @@ class TestHistoricalInsert(TestCase):
                 historical.insert("VMMS Terms of Reference", {"creation":"2026-01-01"}, name="legacy-tor")
         doc.db_insert.assert_not_called()
         child.db_insert.assert_not_called()
+
+    def test_explicit_legacy_name_keeps_required_native_series_default(self):
+        doc, child = self.document()
+        doc.doctype = "VMMS Membership"
+        doc.naming_series = "MSHIP-.#####"
+        child.parenttype = doc.doctype
+        def validate():
+            if not doc.naming_series:
+                raise frappe.MandatoryError("naming_series")
+        doc._validate.side_effect = validate
+        with patch.object(frappe, "new_doc", return_value=doc), patch.object(frappe, "db", SimpleNamespace(exists=lambda *args: False)):
+            result = historical.insert("VMMS Membership", {"creation": "2026-01-01", "naming_series": None}, name="VM-MSH-2026-02593")
+        self.assertEqual(result.name, "VM-MSH-2026-02593")
+        self.assertEqual(result.naming_series, "MSHIP-.#####")
+        doc.db_insert.assert_called_once()
+
+    def test_explicit_series_is_retained_with_legacy_name(self):
+        doc, child = self.document()
+        doc.naming_series = "DEFAULT-.#####"
+        with patch.object(frappe, "new_doc", return_value=doc), patch.object(frappe, "db", SimpleNamespace(exists=lambda *args: False)):
+            result = historical.insert("VMMS Terms of Reference", {"creation": "2026-01-01", "naming_series": "REVIEWED-.#####"}, name="legacy-tor")
+        self.assertEqual(result.naming_series, "REVIEWED-.#####")

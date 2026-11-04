@@ -27,7 +27,11 @@ def insert(doctype, values, name=None):
     if doctype not in ALLOWED:
         raise ValueError('Historical insertion is not allowed for this doctype.')
     doc = frappe.new_doc(doctype)
-    doc.update(values)
+    # A get_doc().as_dict() payload can contain an empty series. Keep the
+    # destination's required default while retaining the explicit legacy name;
+    # this does not allocate a number or change the future numbering policy.
+    doc.update({field: value for field, value in values.items()
+                if field != 'naming_series' or value})
     doc._action = "save"
     if name:
         doc.name = name

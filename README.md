@@ -1,4 +1,4 @@
-# VMMS migration receiver — 0.5.0
+# VMMS migration receiver — 0.6.0
 
 See [PREPARATION_STATUS.md](PREPARATION_STATUS.md) for the continuity work prepared on 4 November 2026, verification scope and the remaining cutover requirements. This code has not been installed or run against kenyaredcross.localhost. Historical payment allocations and legacy history presentation still require review/integration.
 
@@ -327,3 +327,18 @@ and must be reserved for a controlled, backed-up cutover.
 MIT license.
 
 Overnight HRMS availability is expanded into consecutive-day windows. Native Time cannot express 24:00, so the evening segment closes conservatively at 23:59:59; original exact times remain in its description and archive. This does not create worked-hour or attendance claims.
+
+
+## Native person mapping update — 0.6.0
+
+Use exporter 0.4.0 and a **fresh profile mapping version 2 capture**. Older captures remain evidence; native import and every resumed batch reject their incomplete person payloads. Do not resume the old rehearsal checkpoint or overwrite its capture. Mapping version is included in person hashes, so an old completion ledger cannot silently certify the new mapping.
+
+Person facts now populate the existing Red Profile fields for blood group, dependants, internet, mobile-money contact, workplace, social links and complete recorded residence labels. Employee profession is a fallback. Case-equivalent marital/citizenship answers normalize to supported values. Default-zero dependants remain unknown through the explicit answered marker. Biography belongs on the existing User.bio field, including account-only transfers. Existing destination answers are preserved.
+
+User education uses effective site metadata, including Property Setters, and the actual LMS/HRMS row shape. Grade and major subjects are copied. Certifications use VMMS Declared Certification; allergies, additional skills and typed/named supporting documents use their native tables and the reviewed private attachment path. Work locations are retained. Distinct source snapshots remain separately archived and produce a review warning; they are not blindly merged into a current profile.
+
+Insurance and legacy bio-data consent are excluded from active import. Originals remain historical evidence; no Yes/No answer, consent acceptance or refusal is generated. Free-text reason_to_join_krcs remains application history because the current motivation table represents configured choices. These facts no longer write legacy custom-answer rows or create obsolete application questions.
+
+`run.plan` and batch preflight write `mapping_issues.csv` with exact installed field paths, missing targets, unsupported choices, text limits, required child values and phone/URL problems. Inactive links are review items. A plan does not count native schema/value failures as ready. The loader refuses to silently omit populated fields whose target schema is missing; reconciliation compares all mapped profile scalars and child rows, preserving zero/unknown distinctions. Shared member numbers are an explicit preflight identity conflict.
+
+Passing mapping checks does not certify geography, original audit/correspondence access, accounting/payment allocation, identity authority, every old module, attachment recovery or complete cutover. Validate native controller/API/browser behavior in the next reviewed rehearsal. Preparation does not modify either product app or run imports, seeds, schema migrations or payment actions.

@@ -235,14 +235,16 @@ def work(snapshot, source, conf, value, progress):
 	def stop():
 		return time.monotonic() >= deadline
 
+	from onerc_vmms_migrate.continuity import require_capture
+	require_capture(snapshot)
 	if phase == "preflight":
-		from onerc_vmms_migrate.continuity import require_capture
-		require_capture(snapshot)
 		from onerc_vmms_migrate import run
 		from onerc_vmms_migrate.crosswalk import Crosswalks
 
 		cw = Crosswalks.read()
 		built = build(snapshot, conf, crosswalks=cw)
+		from onerc_vmms_migrate.mapping_validation import installed_issues
+		built["mapping_issues"] = installed_issues(built["bundles"], conf)
 		summary = run._report_plan(value["run_id"], cw, built)
 		invalid = [
 			{
@@ -256,6 +258,8 @@ def work(snapshot, source, conf, value, progress):
 		]
 		failures = reference_failures(cw)
 		summary["missing_reference_targets"] = len(failures)
+		failures.extend({"person": bundle["key"], "error": error} for bundle in built["bundles"] for error in bundle["errors"])
+		failures.extend(row for row in built["mapping_issues"] if row["severity"] == "error" and not (row["code"] == "invalid_phone" and conf.get("drop_invalid_phones")))
 		if not conf.get("drop_invalid_phones"):
 			failures.extend(invalid)
 		summary["native_phones_requiring_review"] = len(invalid)

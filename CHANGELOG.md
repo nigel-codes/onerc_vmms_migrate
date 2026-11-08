@@ -1,5 +1,14 @@
 # Changelog
 
+
+## 0.6.0 — 2026-11-08
+
+- Populate existing native registration fields and child tables instead of obsolete custom answers; retain grade/major, typed documents, certifications, work location, social links and User biography.
+- Honor effective child metadata in direct source reads, normalize equivalent choice casing, preserve zero/unknown semantics and exclude legacy insurance/bio-data consent from active answers.
+- Report installed-schema/value blockers before batch imports and expand native profile reconciliation beyond six fields. Refuse silent missing-field drops and shared member-number merges.
+- Require exporter 0.4.0/profile mapping capture version 2 for new or resumed imports. Original captures remain unchanged evidence; mapping-version changes invalidate prior person hashes.
+
+
 ## 0.4.4 — 2026-10-21
 
 - Carry recorded approval statuses without inventing Administrator decisions or

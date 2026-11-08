@@ -1,3 +1,11 @@
+# Current mapping preparation — 8 November 2026
+
+Receiver 0.6.0 / exporter 0.4.0 add native person mappings and stricter field/value reporting. See README.md and VALIDATION.md for the new contract and evidence. A fresh profile_mapping_version=2 capture is required; updating code does not repair the old captured payload. Crosswalk updates use 17 verified exact profession records and the approved insurance omission. No new native reference records are created by preparing those CSVs.
+
+The remaining application-history/routing, geography, identity, payment-allocation, file and whole-module obligations from the deep audit remain open. Existing native fields are distinguished from unsupported values or missing operational adapters. The detailed site-specific evidence is stored outside app repositories.
+
+The following section is the dated 4 November preparation record.
+
 # Migration continuity preparation — 4 November 2026
 
 Code prepared in onerc_vmms_migrate 0.5.0 and companion onerc_vmms_export 0.3.0. Neither vmmsx nor onerc_vmms source is part of this change. No site migration, installation, capture, import, payment request or numbering-setting update was run while preparing this code.

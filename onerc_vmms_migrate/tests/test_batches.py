@@ -50,7 +50,7 @@ class TestBatchCheckpoint(TestCase):
 		from onerc_vmms_migrate.crosswalk import Crosswalks
 
 		cw = MagicMock()
-		snapshot = {"source": {"continuity": {"version": 1, "tables": {}}}}
+		snapshot = {"source": {"profile_mapping_version":2,"continuity": {"version": 1, "tables": {}}}}
 		cw.problems.return_value = [
 			{
 				"kind": "profession",
@@ -80,11 +80,12 @@ class TestBatchCheckpoint(TestCase):
 			"bundles": [{"key": "person", "errors": [], "profile": {"phone": "+2542049963400719047340"}}]
 		}
 		value = {"phase": "preflight", "offset": 0, "batch_size": 1000, "run_id": "test"}
-		snapshot = {"source": {"continuity": {"version": 1, "tables": {}}}}
+		snapshot = {"source": {"profile_mapping_version":2,"continuity": {"version": 1, "tables": {}}}}
 		with (
 			patch.object(batches, "build", return_value=built),
 			patch.object(Crosswalks, "read"),
 			patch.object(run, "_report_plan", side_effect=lambda *args: {}),
+			patch("onerc_vmms_migrate.mapping_validation.installed_issues", return_value=[]),
 		):
 			processed, total, failures, summary = batches.work(snapshot, None, {}, value, None)
 			self.assertEqual((processed, total, len(failures)), (1, 1, 1))
@@ -353,7 +354,7 @@ class TestTransactionalBatch(TestCase):
 		self.enterContext(patch.object(load, "load_bundle", side_effect=native_load))
 		self.enterContext(patch.object(load, "already_migrated", side_effect=already))
 		self.enterContext(patch.object(frappe, "clear_messages"))
-		source = SimpleNamespace(data={})
+		source = SimpleNamespace(data={"source":{"profile_mapping_version":2,"continuity":{"version":1,"tables":{}}}})
 		batches.step(value, source, {})
 		self.assertEqual(batches.checkpoint()["offset"], 1000)
 		batches.step(batches.checkpoint(), source, {})

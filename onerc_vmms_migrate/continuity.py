@@ -11,4 +11,10 @@ def require_capture(snapshot):
     missing = sorted(dt for dt in REQUIRED if 'tab' + dt in manifest['tables'] and dt not in snapshot.get('schemas', {}))
     if missing:
         raise ValueError('The continuity capture omitted required source history: ' + ', '.join(missing))
+    require_profile_mapping(snapshot)
     return manifest
+
+
+def require_profile_mapping(snapshot):
+    if snapshot.get("source", {}).get("profile_mapping_version") != 2:
+        raise ValueError("Take a fresh profile mapping capture with both migration apps updated; the earlier operational payload omitted source person fields/education.")

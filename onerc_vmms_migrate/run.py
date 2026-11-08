@@ -232,6 +232,8 @@ def plan():
 	run_id = _run_id("plan")
 	with Source() as source:
 		_snapshot, cw, result = _build(source)
+	from onerc_vmms_migrate.mapping_validation import installed_issues
+	result["mapping_issues"] = installed_issues(result["bundles"], workspace.config())
 	return _report_plan(run_id, cw, result)
 
 
@@ -251,7 +253,8 @@ def _rejection_category(error):
 def _report_plan(run_id, cw, result) -> dict:
 	out = workspace.report_dir(run_id)
 	bundles = result["bundles"]
-	ready = [b for b in bundles if not b["errors"]]
+	mapping_blocked = {row["person"] for row in result.get("mapping_issues", []) if row["severity"] == "error"}
+	ready = [b for b in bundles if not b["errors"] and b["key"] not in mapping_blocked]
 	rejects = [{"person": b["key"], "error": e} for b in bundles for e in b["errors"]]
 	warnings = [{"person": b["key"], "warning": w} for b in bundles for w in b["warnings"]]
 	skipped_memberships = [
@@ -263,8 +266,11 @@ def _report_plan(run_id, cw, result) -> dict:
 	_write_csv(out, "not_migrated.csv", result["not_migrated"])
 	_write_csv(out, "memberships_not_migrated.csv", skipped_memberships)
 	_write_csv(out, "crosswalk_problems.csv", cw.problems())
+	_write_csv(out, "mapping_issues.csv", result.get("mapping_issues", []))
 
 	summary = {
+		"mapping_errors": sum(r["severity"] == "error" for r in result.get("mapping_issues", [])),
+		"mapping_review_items": sum(r["severity"] == "review" for r in result.get("mapping_issues", [])),
 		"people": len(bundles),
 		"ready": len(ready),
 		"rejected": len(bundles) - len(ready),
@@ -303,6 +309,8 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 
 	with Source(conf) as source:
 		_snapshot, cw, result = _build(source)
+		from onerc_vmms_migrate.continuity import require_profile_mapping
+		require_profile_mapping(_snapshot)
 		if _snapshot.get("capture_complete") is False:
 			frappe.throw("This bulk capture has missing source files. Review missing-files.json and capture a corrected source snapshot before rehearsing or importing.")
 		plan_summary = _report_plan(run_id, cw, result)
@@ -412,20 +420,22 @@ def reconcile(bundles=None):
 		profile_row = next((r for r in rows if r.target_doctype == "Red Profile"), None)
 
 		def compare(what, expected, actual):
-			if str(expected or "") != str(actual or ""):
+			if str(expected if expected is not None else "") != str(actual if actual is not None else ""):
 				mismatches.append({"person": b["key"], "field": what, "expected": expected, "actual": actual})
 
 		if profile_row and profile_row.outcome == "created" and b["profile"]:
-			actual = frappe.db.get_value(
-				"Red Profile",
-				profile_row.target_name,
-				["email", "first_name", "last_name", "date_of_birth", "gender", "home_geo_node"],
-				as_dict=True,
-			)
-			for field in ("email", "first_name", "last_name", "date_of_birth", "gender", "home_geo_node"):
-				compare(
-					f"Red Profile.{field}", b["profile"].get(field), actual.get(field) if actual else None
-				)
+			actual = frappe.get_doc("Red Profile", profile_row.target_name)
+			for field in ("email", *loader.PROFILE_SCALARS):
+				if b["profile"].get(field) not in (None, "", []):
+					compare(f"Red Profile.{field}", b["profile"][field], actual.get(field))
+			for field in loader.PROFILE_TABLES:
+				expected_rows = b["profile"].get(field) or []
+				actual_rows = actual.get(field) or []
+				compare(f"Red Profile.{field}.row_count", len(expected_rows), len(actual_rows))
+				for index, (expected, native) in enumerate(zip(expected_rows, actual_rows), 1):
+					for column, value in expected.items():
+						if not column.startswith("_") and value not in (None, "", []):
+							compare(f"Red Profile.{field}[{index}].{column}", value, native.get(column))
 
 		if b["volunteer"]:
 			row = by_target.get(("VMMS Volunteer", b["volunteer"]["source_name"]))

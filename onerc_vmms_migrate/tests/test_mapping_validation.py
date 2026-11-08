@@ -145,3 +145,31 @@ class TestSourceTransformGate(TestCase):
 				snap, None, {}, {"phase": "preflight", "offset": 0, "batch_size": 1, "run_id": "test"}, None
 			)
 		self.assertTrue(any(row.get("error") == "github is invalid" for row in result[2]))
+
+
+class TestInstalledRequiredFields(TestCase):
+	def test_required_site_field_outside_the_mapper_is_still_reported(self):
+		from types import SimpleNamespace
+		from unittest.mock import MagicMock, patch
+		import frappe
+		from onerc_vmms_migrate.mapping_validation import installed_issues
+
+		fields = [
+			frappe._dict(fieldname="email", fieldtype="Data", reqd=1),
+			frappe._dict(fieldname="site_required_fact", fieldtype="Data", reqd=1),
+		]
+		db = MagicMock()
+		db.exists.return_value = True
+		with (
+			patch.object(frappe, "db", db),
+			patch.object(frappe, "get_meta", return_value=SimpleNamespace(fields=fields)),
+		):
+			issues = installed_issues(
+				[{"key": "person", "profile": {"email": "person@example.org"}, "files": []}]
+			)
+		self.assertTrue(
+			any(
+				row["field"] == "Red Profile.site_required_fact" and row["code"] == "missing_required_value"
+				for row in issues
+			)
+		)

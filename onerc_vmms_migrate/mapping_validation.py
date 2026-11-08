@@ -128,7 +128,7 @@ def installed_issues(bundles, conf=None):
 			fields = {
 				key: value
 				for key, value in fields.items()
-				if key in (*PROFILE_SCALARS, *PROFILE_TABLES, "email")
+				if key in (*PROFILE_SCALARS, *PROFILE_TABLES, "email") or value.get("reqd")
 			}
 		schemas[doctype] = fields
 		for meta in fields.values():

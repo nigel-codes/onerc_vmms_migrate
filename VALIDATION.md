@@ -1,6 +1,6 @@
 # Native mapping validation — 8 November 2026
 
-- Receiver: 236 isolated unit tests passed, including native profile/child mapping, insurance/consent exclusions, zero/unknown preservation, effective education metadata, schema/value gates, source member-ID conflicts and complete profile scalar/child reconciliation.
+- Receiver: 237 isolated unit tests passed, including native profile/child mapping, insurance/consent exclusions, zero/unknown preservation, effective education metadata, schema/value gates, source member-ID conflicts and complete profile scalar/child reconciliation.
 - Exporter: 39 isolated unit tests passed, including effective Property Setters and capture-version transport.
 - Undefined-name/syntax checks and git diff whitespace checks passed. A deliberate zero/answered mutation failed its regression test and was restored.
 - A READ ONLY extraction of the local cloned source recovered all 3,253 education rows with captured User parents; a pure mapping preview evaluated 25,000 person bundles against current installed kenyaclone metadata and verified existing lookup records. No Frappe site was initialized, native records inserted, source rewritten, schema/seed run, external production contacted or payment replayed.

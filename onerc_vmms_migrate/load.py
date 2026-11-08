@@ -31,10 +31,11 @@ import frappe
 from frappe.utils import now_datetime
 
 from onerc_vmms_migrate.silence import Guard
+from onerc_vmms_migrate.profile_mapping import DIRECT_SCALARS
 
 LEDGER = "Legacy Migration Record"
 
-PROFILE_SCALARS = (
+PROFILE_SCALARS = (*DIRECT_SCALARS.values(), "vmms_dependants_answered",
 	"legacy_phone",
 	"legacy_untyped_id_number",
 	"legacy_identity_claims",
@@ -248,8 +249,14 @@ def _profile(ctx, user) -> str:
 	if existing:
 		doc = frappe.get_doc("Red Profile", existing)
 		for field in PROFILE_SCALARS:
-			if meta.has_field(field) and not doc.get(field) and data.get(field):
+			if field in ("vmms_number_of_dependants", "vmms_dependants_answered"):
+				continue
+			if meta.has_field(field) and not doc.get(field) and data.get(field) not in (None, ""):
 				doc.set(field, data[field])
+		if not doc.get("vmms_dependants_answered") and not doc.get("vmms_number_of_dependants"):
+			for field in ("vmms_number_of_dependants", "vmms_dependants_answered"):
+				if meta.has_field(field) and data.get(field) is not None:
+					doc.set(field, data[field])
 		for field in PROFILE_TABLES:
 			if meta.has_field(field) and not doc.get(field) and data.get(field):
 				doc.set(field, _clean_rows(data[field]))
@@ -266,7 +273,7 @@ def _profile(ctx, user) -> str:
 
 	values = {"doctype": "Red Profile", "email": data["email"], "user": user}
 	for field in PROFILE_SCALARS:
-		if meta.has_field(field) and data.get(field):
+		if meta.has_field(field) and data.get(field) not in (None, ""):
 			values[field] = data[field]
 	for field in PROFILE_TABLES:
 		if meta.has_field(field) and data.get(field):
@@ -310,6 +317,7 @@ def _check_phone(ctx, data, field="phone", label="phone", society=True, required
 
 def _review_profile_phones(ctx, data):
 	_check_phone(ctx, data)
+	_check_phone(ctx, data, "vmms_mpesa_mobile_phone", "vmms_mpesa_mobile_phone", society=False)
 	for index, row in enumerate(data.get("vmms_references") or [], 1):
 		_check_phone(ctx, row, label=f"vmms_references[{index}].phone", society=False)
 

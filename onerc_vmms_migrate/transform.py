@@ -28,7 +28,7 @@ import hashlib
 import json
 from collections import defaultdict
 
-from onerc_vmms_migrate import normalise
+from onerc_vmms_migrate import normalise, profile_mapping
 from onerc_vmms_migrate.history_model import membership_state
 from onerc_vmms_migrate.crosswalk import DROP, UNMAPPED, Crosswalks
 
@@ -37,20 +37,6 @@ RESIDENCE_FIELDS = ("sub_location", "administrative_location", "ward", "sub_coun
 
 MARITAL = {"Single", "Married", "Divorced", "Widowed", "Other"}
 CITIZENSHIP = {"Citizen", "Non-citizen", "Refugee", "Migrant", "Other"}
-
-# Old fields the new product deliberately treats as organization-specific
-# questions rather than first-class data. The crosswalk `question` decides where
-# each one goes, or that it stays in the archive.
-QUESTION_FIELDS = (
-	"blood_group",
-	"allergies",
-	"has_insurance",
-	"access_to_internet",
-	"number_of_dependants",
-	"reason_to_join_krcs",
-	"place_of_work",
-	"mpesa_mobile_phone",
-)
 
 # Old roles that mean nothing more than "a volunteer or member with a login".
 # Any other role on a migrated account is listed, so staff are re-provisioned
@@ -336,14 +322,16 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 	marital = normalise.text(
 		_first(u.get("marital_status"), e.get("marital_status"), a.get("marital_status"))
 	)
-	if marital in MARITAL:
-		profile["marital_status"] = marital
+	if profile_mapping.choice(marital, MARITAL):
+		profile["marital_status"] = profile_mapping.choice(marital, MARITAL)
 	elif marital:
 		b["warnings"].append(f"marital status {marital!r} is not one core knows; not carried")
 
 	citizenship = normalise.text(_first(u.get("citizenship"), a.get("citizenship")))
-	if citizenship in CITIZENSHIP:
-		profile["citizenship_status"] = citizenship
+	if profile_mapping.choice(citizenship, CITIZENSHIP):
+		profile["citizenship_status"] = profile_mapping.choice(citizenship, CITIZENSHIP)
+	elif citizenship:
+		b["warnings"].append(f"citizenship {citizenship!r} has no supported mapping; original retained")
 	profile["country_of_citizenship"] = _first(
 		u.get("country_of_citizenship"), a.get("country_of_citizenship")
 	)
@@ -364,6 +352,7 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 			profile["home_geo_node"] = node
 			break
 
+	profile_mapping.personal_details(b, profile, u, e, a, conf)
 	profile["identifications"] = _identifications(b, u, a, cw)
 	if b.get("untyped_id_number"):
 		profile["legacy_untyped_id_number"] = b["untyped_id_number"]
@@ -387,7 +376,7 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 		profile["vmms_disability_status"] = "Yes"
 		profile["vmms_disabilities"] = [{"disability": d} for d in chosen]
 
-	profession = _first(a.get("profession"), u.get("profession"))
+	profession = _first(a.get("profession"), u.get("profession"), e.get("custom_profession"))
 	if profession:
 		target = _mapped(b, cw, "profession", profession)
 		if target:
@@ -763,22 +752,9 @@ def _contacts_and_answers(b, employee, u, a, cw, conf) -> tuple[list, list]:
 			"no emergency contact on record (the new site requires one for future approvals)"
 		)
 
-	answers = []
-	for field in QUESTION_FIELDS:
-		if field == "allergies":
-			rows, _ = _first_table("allergies", u, a)
-			value = ", ".join(
-				normalise.text(r.get("allergy")) for r in rows if normalise.text(r.get("allergy"))
-			)
-		else:
-			value = normalise.text(_first(u.get(field), a.get(field)))
-		if not value:
-			continue
-		question = _mapped(b, cw, "question", field)
-		if question:
-			answers.append({"question": question, "answer_value": value})
-
-	return contacts, answers
+	# Person facts use native profile fields. Motivation remains in original
+	# application history; insurance and legacy consent are excluded.
+	return contacts, []
 
 
 def _member(b, members, snapshot, cw, conf, today) -> None:
@@ -903,6 +879,7 @@ def _hash(user, employees, applicants, members, snapshot) -> str:
 	# Signing in is not a change to the person.
 	user = {k: v for k, v in (user or {}).items() if k != "last_login"}
 	payload = {
+		"profile_mapping_version": profile_mapping.VERSION,
 		"user": user,
 		"employees": employees,
 		"applicants": applicants,

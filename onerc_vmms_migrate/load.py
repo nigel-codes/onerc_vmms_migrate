@@ -32,10 +32,13 @@ from frappe.utils import now_datetime
 
 from onerc_vmms_migrate.silence import Guard
 from onerc_vmms_migrate.profile_mapping import DIRECT_SCALARS
+from onerc_vmms_migrate.child_mapping import NATIVE_TABLES
 
 LEDGER = "Legacy Migration Record"
 
-PROFILE_SCALARS = (*DIRECT_SCALARS.values(), "vmms_dependants_answered",
+PROFILE_SCALARS = (
+	*DIRECT_SCALARS.values(),
+	"vmms_dependants_answered",
 	"legacy_phone",
 	"legacy_untyped_id_number",
 	"legacy_identity_claims",
@@ -55,6 +58,7 @@ PROFILE_SCALARS = (*DIRECT_SCALARS.values(), "vmms_dependants_answered",
 	"vmms_other_profession",
 )
 PROFILE_TABLES = (
+	*NATIVE_TABLES.values(),
 	"identifications",
 	"vmms_disabilities",
 	"vmms_education",
@@ -200,7 +204,7 @@ def _user(ctx) -> str | None:
 		missing=[role for role in roles if role not in current]
 		if missing:return original_add_roles(*missing)
 	user.add_roles=add_missing_roles
-	for field in ("username", "mobile_no", "login_after", "login_before", "restrict_ip", "language", "time_zone"):
+	for field in ("username", "mobile_no", "login_after", "login_before", "restrict_ip", "language", "time_zone", "bio"):
 		if login.get(field) is not None and frappe.get_meta("User").has_field(field):
 			user.set(field, login[field])
 	# Use Frappe's supported bulk-import mode in this process only.
@@ -238,6 +242,9 @@ def _profile(ctx, user) -> str:
 	bundle = ctx["bundle"]
 	data = deepcopy(bundle["profile"])
 	meta = frappe.get_meta("Red Profile")
+	missing = [f for f in (*PROFILE_SCALARS, *PROFILE_TABLES) if data.get(f) not in (None, "", []) and not meta.has_field(f)]
+	if missing:
+		raise ValueError("Populated source fields have no installed native destination: " + ", ".join(missing))
 
 	_check_links(ctx, data)
 	_review_profile_phones(ctx, data)
@@ -266,10 +273,6 @@ def _profile(ctx, user) -> str:
 		ctx["warnings"].append("a profile with this email already existed; only its empty fields were filled")
 		_ledger(ctx, "Person", bundle["key"], "Red Profile", doc.name, "adopted")
 		return doc.name
-
-	missing = [f for f in (*PROFILE_SCALARS, *PROFILE_TABLES) if data.get(f) and not meta.has_field(f)]
-	if missing:
-		ctx["warnings"].append("this site has no field for: " + ", ".join(missing))
 
 	values = {"doctype": "Red Profile", "email": data["email"], "user": user}
 	for field in PROFILE_SCALARS:

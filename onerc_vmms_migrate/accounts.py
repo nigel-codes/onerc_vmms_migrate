@@ -34,7 +34,7 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
             existed = bool(frappe.db.exists('User',email))
             login = {'email':email,'source_name':row['name'],'enabled':int(bool(row.get('enabled'))),
                 'password_hash':password,'social_logins':row.get('social_logins') or [],
-                **{f:row.get(f) for f in ('username','mobile_no','login_after','login_before','restrict_ip','language','time_zone')}}
+                **{f:row.get(f) for f in ('username','mobile_no','login_after','login_before','restrict_ip','language','time_zone','bio')}}
             context={'bundle':{'user':login,'profile':{'first_name':row.get('first_name') or email,
                 'middle_name':row.get('middle_name'),'last_name':row.get('last_name') or ''}},
                 'conf':conf,'ledger':[],'warnings':[]}

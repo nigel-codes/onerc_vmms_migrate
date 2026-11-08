@@ -28,7 +28,7 @@ import hashlib
 import json
 from collections import defaultdict
 
-from onerc_vmms_migrate import normalise, profile_mapping
+from onerc_vmms_migrate import normalise, profile_mapping, child_mapping
 from onerc_vmms_migrate.history_model import membership_state
 from onerc_vmms_migrate.crosswalk import DROP, UNMAPPED, Crosswalks
 
@@ -356,7 +356,7 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 	profile["identifications"] = _identifications(b, u, a, cw)
 	if b.get("untyped_id_number"):
 		profile["legacy_untyped_id_number"] = b["untyped_id_number"]
-	_supporting_documents(b, profile, u, a, cw)
+	child_mapping.details(b, profile, u, a)
 
 	rows, _ = _first_table("disabilities", u, a)
 	# A row saying "None" is somebody answering no, not a disability.
@@ -437,74 +437,32 @@ def _identifications(b, u, a, cw) -> list[dict]:
 	return rows
 
 
-def _supporting_documents(b, profile, u, a, cw) -> None:
-	documents, _ = _first_table("supporting_documents", u, a)
-	for row in documents:
-		if not row.get("attachment"):
-			continue
-		target = _mapped(b, cw, "supporting_document", row.get("type"))
-		if not target:
-			continue
-		if target == "file":
-			b["files"].append({"url": row["attachment"], "purpose": "file"})
-			continue
-		match = next(
-			(r for r in profile["identifications"] if r["id_type"] == target and not r.get("_scan")), None
-		)
-		if not match:
-			match = {"id_type": target, "id_number": "", "is_primary": 0 if profile["identifications"] else 1}
-			profile["identifications"].append(match)
-		match["_scan"] = row["attachment"]
-		b["files"].append(
-			{
-				"url": row["attachment"],
-				"purpose": "identification",
-				"index": profile["identifications"].index(match),
-			}
-		)
-
-
 def _education(b, u, e, a, cw) -> list[dict]:
-	# User.education is the LMS "Education Detail" shape; the others are HRMS.
-	if u.get("education"):
-		out = []
-		for r in u["education"]:
-			institution = normalise.text(r.get("institution_name"))
-			if not institution:
-				continue
-			level = _mapped(b, cw, "education_level", r.get("degree_type")) if r.get("degree_type") else None
-			out.append(
-				{
-					"institution": institution,
-					"level": level,
-					"qualification": normalise.text(
-						" ".join(filter(None, [r.get("degree_type"), r.get("major")]))
-					),
-					"started_in": normalise.year(r.get("start_date")),
-					"finished_in": normalise.year(r.get("end_date")),
-				}
-			)
-		return [_education_limits(b,item) for item in out]
-
-	rows, _ = _first_table("education", e, a)
+	# The effective User table can be HRMS Employee Education or LMS
+	# Education Detail. Decode each row by its actual fields, not its parent.
 	out = []
-	for r in rows:
-		institution = normalise.text(r.get("school_univ"))
+	for r in child_mapping.selected_rows(b, "education", u, e, a):
+		institution = normalise.text(_first(r.get("school_univ"), r.get("institution_name")))
 		if not institution:
+			b["errors"].append("education row has no institution; original retained")
 			continue
-		level = _mapped(b, cw, "education_level", r.get("level")) if r.get("level") else None
+		hrms = "school_univ" in r or "year_of_passing" in r
+		raw_level = r.get("level") if hrms else r.get("degree_type")
 		row = {
 			"institution": institution,
-			"level": level,
-			"qualification": normalise.text(r.get("qualification")),
-			"finished_in": normalise.year(r.get("year_of_passing")),
+			"level": _mapped(b, cw, "education_level", raw_level) if raw_level else None,
+			"qualification": normalise.text(r.get("qualification")) if hrms else normalise.text(" ".join(filter(None, [r.get("degree_type"), r.get("major")]))),
+			"finished_in": normalise.year(r.get("year_of_passing") if hrms else r.get("end_date")),
 		}
+		if not hrms:
+			row["started_in"] = normalise.year(r.get("start_date"))
+		for field in ("class_per", "maj_opt_subj"):
+			if r.get(field) not in (None, ""):
+				row[field] = normalise.text(r[field])
 		if r.get("attachment"):
-			b["files"].append(
-				{"url": r["attachment"], "purpose": "table", "table": "vmms_education", "index": len(out)}
-			)
-		out.append(row)
-	return [_education_limits(b,item) for item in out]
+			b["files"].append({"url": r["attachment"], "purpose": "table", "table": "vmms_education", "index": len(out)})
+		out.append(_education_limits(b, row))
+	return out
 
 
 def _education_limits(bundle,row):
@@ -527,6 +485,7 @@ def _work_experience(u, e, a) -> list[dict]:
 			"ended_on": normalise.date(r.get("to_date")),
 			"is_current": 1 if r.get("current") else 0,
 			"summary": r.get("description"),
+			"location": normalise.text(r.get("location")),
 		}
 		for r in rows
 		if normalise.text(r.get("company"))
@@ -541,6 +500,7 @@ def _work_experience(u, e, a) -> list[dict]:
 					"ended_on": normalise.date(r.get("to_date")),
 					"is_current": 1 if r.get("current") else 0,
 					"summary": r.get("description"),
+					"location": normalise.text(r.get("location")),
 				}
 			)
 	if not out:
@@ -574,17 +534,7 @@ def _training(b, u, a) -> list[dict]:
 				"remarks": r.get("remarks"),
 			}
 		)
-	certifications, _ = _first_table("certification", u, a)
-	for r in certifications:
-		if normalise.text(r.get("certification_name")):
-			out.append(
-				{
-					"course_name": normalise.text(r.get("certification_name")),
-					"institution": normalise.text(r.get("organization")),
-					"completed_on": normalise.date(r.get("issue_date")),
-					"remarks": r.get("description"),
-				}
-			)
+
 	return out
 
 
@@ -657,6 +607,7 @@ def _login(b, email, user, snapshot) -> dict | None:
 		"enabled": 1 if user.get("enabled") else 0,
 		"password_hash": snapshot["password_hashes"].get(user["name"]),
 		"username": user.get("username"),
+		"bio": user.get("bio"),
 		"mobile_no": user.get("mobile_no"),
 		"login_after": user.get("login_after"),
 		"login_before": user.get("login_before"),
@@ -760,7 +711,7 @@ def _contacts_and_answers(b, employee, u, a, cw, conf) -> tuple[list, list]:
 def _member(b, members, snapshot, cw, conf, today) -> None:
 	names = {m["name"] for m in members}
 	if len(members) > 1:
-		b["warnings"].append("several old member records merged into one: " + ", ".join(sorted(names)))
+		b["errors"].append("multiple source member identifiers share one profile; exact-number identity requires review: " + ", ".join(sorted(names)))
 
 	joined = []
 	for membership in sorted(snapshot["memberships"].values(), key=lambda m: m["name"]):

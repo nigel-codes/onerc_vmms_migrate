@@ -1,4 +1,5 @@
 """Native registration facts. Historical answers never create new consent."""
+
 import re
 from urllib.parse import urlsplit
 
@@ -42,7 +43,9 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 			continue
 		if source == "number_of_dependants":
 			if isinstance(value, bool) or not re.fullmatch(r"\d+", str(value).strip()):
-				bundle["errors"].append("number_of_dependants is not a non-negative whole number; original retained")
+				bundle["errors"].append(
+					"number_of_dependants is not a non-negative whole number; original retained"
+				)
 				continue
 			profile[target] = int(value)
 			# Old Int default 0 does not establish an explicit answer. Preserve
@@ -64,17 +67,24 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 			value = str(value).strip()
 			try:
 				parts = urlsplit(value)
-				valid = parts.scheme in ("http", "https") and parts.hostname and not parts.username and not parts.password
+				valid = (
+					parts.scheme in ("http", "https")
+					and parts.hostname
+					and not parts.username
+					and not parts.password
+				)
 			except ValueError:
 				valid = False
 			if not valid:
-				bundle["errors"].append(source + " is not a supported http/https profile URL; original retained")
+				bundle["errors"].append(
+					source + " is not a supported http/https profile URL; original retained"
+				)
 				continue
 		else:
 			value = normalise.text(value)
 		if value not in (None, ""):
 			profile[target] = value
 	if first_value("reason_to_join_krcs", user, applicant):
-		bundle["warnings"].append("reason_to_join_krcs preserved in original application history; no equivalent free-text motivation field")
-	if first_value("bio", user, applicant):
-		bundle["warnings"].append("bio preserved in source history; no native biography destination mapped")
+		bundle["warnings"].append(
+			"reason_to_join_krcs preserved in original application history; no equivalent free-text motivation field"
+		)

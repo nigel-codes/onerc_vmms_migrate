@@ -80,6 +80,8 @@ def prepare(snapshot, conf=None):
         for group in ('users','applicants'):
             for row in snapshot[group].values():
                 lookup(kind, row.get(field), dt, label, key_field)
+    for row in snapshot["employees"].values():
+        lookup("profession", row.get("custom_profession"), "Profession", "profession")
     # Preserve unknown ID vocabularies as their own types rather than dropping IDs.
     map_value('identification_type', '__passport_number__', frappe.db.get_value('Identification Type', {'identification_type_name':'Passport'}))
     specs = (
@@ -107,20 +109,8 @@ def prepare(snapshot, conf=None):
              'is_lifetime':int(cycle=='One Off'),'duration_days':30 if cycle=='Monthly' else 365,
              'approval_mode':'routed'})
         map_value('membership_type',row['name'],target)
-    # Supporting scans stay private on the profile. Their original types survive
-    # in the archive; a scan alone is not proof of an ID number/type.
-    for group in ('users','applicants'):
-        for row in snapshot[group].values():
-            for child in row.get('supporting_documents') or []:
-                map_value('supporting_document', child.get('document_type') or child.get('type'), 'file')
-    from onerc_vmms_migrate.transform import QUESTION_FIELDS
-    for field in QUESTION_FIELDS:
-        label = 'Legacy: ' + field.replace('_',' ')
-        existing = frappe.db.get_value('VMMS Application Question', {'asked_on':'VMMS Volunteer Application','question_label':label})
-        target = existing or frappe.get_doc({'doctype':'VMMS Application Question',
-            'asked_on':'VMMS Volunteer Application','question_label':label,
-            'field_type':'Small Text','is_active':0,'is_required':0}).insert(ignore_permissions=True).name
-        map_value('question',field,target)
+    # Supporting types use their native table. Person facts no longer create
+    # legacy application questions or generic-file crosswalk projections.
     for row in history.rows('TOR Methodology'):
         ensure('VMMS TOR Methodology','methodology_name',row['name'],'methodology_key')
     from onerc_vmms_migrate.trees import batched_trees

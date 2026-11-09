@@ -11,6 +11,10 @@ after_install = "onerc_vmms_migrate.install.after_install"
 after_migrate = "onerc_vmms_migrate.install.after_install"
 required_apps = ["erpnext", "onerc_core", "vmmsx", "buzz"]
 
+extend_doctype_class = {
+    "Email Queue": ["onerc_vmms_migrate.placeholder_mail.PlaceholderEmailGuard"],
+}
+
 # Send non-GET requests for this app's endpoints as native `application/json`
 # bodies instead of form-encoded, per-key JSON-stringified values.
 use_json_request_body = True

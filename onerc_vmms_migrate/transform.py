@@ -111,18 +111,20 @@ def _group(snapshot: dict) -> tuple[dict, list]:
 		lambda: {"employees": [], "members": [], "applicants": [], "user": None}
 	)
 	unplaced = []
+	assigned = {(r["source_doctype"], r["source_name"]): r["email"]
+		for r in snapshot.get("_migration_identity_emails", [])}
 
 	for employee in snapshot["employees"].values():
 		if not employee.get("is_volunteer"):
 			continue
-		email = employee_email(snapshot, employee)
+		email = employee_email(snapshot, employee) or assigned.get(("Employee", employee["name"]))
 		if not email:
 			unplaced.append(_skip("Employee", employee["name"], "volunteer has no usable email"))
 			continue
 		people[email]["employees"].append(employee)
 
 	for member in snapshot["members"].values():
-		email = member_email(snapshot, member)
+		email = member_email(snapshot, member) or assigned.get(("VM Member", member["name"]))
 		if not email:
 			unplaced.append(_skip("VM Member", member["name"], "member has no usable email"))
 			continue
@@ -132,7 +134,7 @@ def _group(snapshot: dict) -> tuple[dict, list]:
 	# becomes an active volunteer merely because it was captured.
 	for applicant in snapshot["applicants"].values():
 		if applicant.get("is_volunteer"):
-			email = normalise.email(applicant.get("email_id"))
+			email = normalise.email(applicant.get("email_id")) or assigned.get(("Job Applicant", applicant["name"]))
 			if email:
 				people[email]  # Seed the identity; applications are attached below.
 			else:
@@ -140,13 +142,13 @@ def _group(snapshot: dict) -> tuple[dict, list]:
 
 	users_by_email = {}
 	for user in snapshot["users"].values():
-		email = normalise.email(user.get("email")) or normalise.email(user.get("name"))
+		email = normalise.email(user.get("email")) or normalise.email(user.get("name")) or assigned.get(("User", user["name"]))
 		if email:
 			users_by_email[email] = user
 
 	applicants_by_email = defaultdict(list)
 	for applicant in snapshot["applicants"].values():
-		email = normalise.email(applicant.get("email_id"))
+		email = normalise.email(applicant.get("email_id")) or assigned.get(("Job Applicant", applicant["name"]))
 		if email:
 			applicants_by_email[email].append(applicant)
 
@@ -242,7 +244,12 @@ def _bundle(email, person, snapshot, cw: Crosswalks, conf, today) -> dict:
 		b["sources"].append(("VM Member", record["name"]))
 
 	b["profile"] = _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, today)
+	if any(r["email"] == email and r.get("is_placeholder") for r in snapshot.get("_migration_identity_emails", [])):
+		b["profile"]["legacy_email_placeholder"] = 1
+		b["warnings"].append("Placeholder email assigned; outbound email is blocked until a real address is verified. Only an existing source login can transfer.")
 	b["user"] = _login(b, email, user, snapshot)
+	if b["user"] and b["profile"].get("legacy_email_placeholder"):
+		b["user"]["legacy_email_placeholder"] = 1
 
 	if employee and not b.get("volunteer_excluded"):
 		_volunteer(b, employee, applicant, user, cw, conf, today)

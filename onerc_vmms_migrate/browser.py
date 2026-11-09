@@ -79,6 +79,10 @@ def save_state(value):
 def fingerprint(include_code=True):
 	conf = dict(workspace.config())
 	digest = hashlib.sha256(json.dumps(conf, sort_keys=True, default=str).encode())
+	registry = os.path.join(os.path.dirname(workspace.crosswalk_dir()), "placeholder-emails.json")
+	if os.path.isfile(registry):
+		with open(registry, "rb") as handle:
+			digest.update(b"placeholder-emails\0" + handle.read())
 	for kind in sorted(crosswalk.KINDS):
 		path = os.path.join(workspace.crosswalk_dir(), kind + ".csv")
 		if os.path.isfile(path):

@@ -114,12 +114,17 @@ def build(snapshot, conf, crosswalks=None):
 	from onerc_vmms_migrate import transform
 	from onerc_vmms_migrate.crosswalk import Crosswalks
 
-	return transform.build(
+	from onerc_vmms_migrate.placeholder_emails import prepare
+	from onerc_vmms_migrate.identity_review import rows
+	prepare(snapshot, conf)
+	built = transform.build(
 		snapshot,
 		crosswalks if crosswalks is not None else Crosswalks.read(),
 		conf,
 		datetime.date.fromisoformat(today()),
 	)
+	built["identity_review"] = rows(snapshot, built)
+	return built
 
 
 def reference_failures(crosswalks):
@@ -128,6 +133,7 @@ def reference_failures(crosswalks):
 
 def excluded_identities(snapshot, built):
 	from onerc_vmms_migrate import normalise
+	from onerc_vmms_migrate.placeholder_emails import login_email
 
 	snapshot["excluded_native_identities"] = {
 		(dt, name)
@@ -143,7 +149,7 @@ def excluded_identities(snapshot, built):
 		("User", r["name"])
 		for r in snapshot["users"].values()
 		if r["name"] not in ("Administrator", "Guest")
-		and not (normalise.email(r.get("email")) or normalise.email(r["name"]))
+		and not login_email(snapshot,r)
 	)
 
 
@@ -270,6 +276,8 @@ def work(snapshot, source, conf, value, progress):
 		summary = historical.archive(snapshot, value["run_id"], records=rows)
 		return len(rows), len(snapshot["history"]) + len(archive_users(snapshot)), [], summary
 	if phase == "accounts":
+		from onerc_vmms_migrate.placeholder_emails import prepare
+		prepare(snapshot, conf)
 		keys = sorted(snapshot["users"])[start : start + size]
 		part = {**snapshot, "users": {key: snapshot["users"][key] for key in keys}}
 		summary = accounts.transfer(part, conf, value["run_id"], progress=None, stop=stop)
@@ -343,17 +351,21 @@ def verify(snapshot, conf, value):
 	from onerc_vmms_migrate import full_reconcile, login_policy, normalise, run
 	from onerc_vmms_migrate.crosswalk import Crosswalks
 	from onerc_vmms_migrate.policy import source_exclusions_accepted
+	from onerc_vmms_migrate.placeholder_emails import login_email
+	from onerc_vmms_migrate.placeholder_emails import prepare
+	prepare(snapshot, conf)
 
 	summary, failures = full_reconcile.verify(snapshot)
 	cw = Crosswalks.read()
 	built = build(snapshot, conf, crosswalks=cw)
 	run._report_plan(value["run_id"], cw, built)
+	run.write_identity_reconciliation(workspace.report_dir(value["run_id"]), built.get("identity_review", []))
 	failures.extend(reference_failures(cw))
 	if not any(not bundle["errors"] for bundle in built["bundles"]):
 		failures.append({"problem": "There are no ready people to verify"})
 	rejected = sum(bool(bundle["errors"]) for bundle in built["bundles"])
 	accounts_excluded = sum(
-		not (normalise.email(row.get("email")) or normalise.email(row["name"]))
+		not login_email(snapshot,row)
 		for row in snapshot["users"].values()
 		if row["name"] not in ("Administrator", "Guest")
 	)

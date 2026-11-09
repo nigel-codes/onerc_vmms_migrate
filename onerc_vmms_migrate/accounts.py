@@ -9,15 +9,18 @@ from onerc_vmms_migrate.silence import SilenceBreached
 
 
 def transfer(snapshot, conf, run_id, progress=None, stop=None):
+    from onerc_vmms_migrate.placeholder_emails import login_email, prepare
+    if "_migration_identity_emails" not in snapshot or not conf.get("assign_missing_emails"):
+        prepare(snapshot, conf)
     result = {'loaded': 0, 'existing': 0, 'failed': [], 'without_password': 0,
-              'roles_requiring_review': [], 'excluded': [], 'total': len(snapshot['users'])}
+              'roles_requiring_review': [], 'excluded': [], 'total': len(snapshot['users']), 'placeholder_accounts': 0}
     workspace.write_json(workspace.path('account-failures-in-progress.json'),[])
     processed = 0
     for index, row in enumerate(snapshot['users'].values(), 1):
         if processed and stop and stop():
             break
         processed += 1
-        email = normalise.email(row.get('email')) or normalise.email(row['name'])
+        email = login_email(snapshot,row)
         if row['name'] in ('Administrator','Guest'):
             continue
         password = snapshot.get('password_hashes', {}).get(row['name'])
@@ -35,13 +38,19 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
             login = {'email':email,'source_name':row['name'],'enabled':int(bool(row.get('enabled'))),
                 'password_hash':password,'social_logins':row.get('social_logins') or [],
                 **{f:row.get(f) for f in ('username','mobile_no','login_after','login_before','restrict_ip','language','time_zone','bio')}}
+            placeholder = not (normalise.email(row.get('email')) or normalise.email(row['name']))
+            if placeholder:
+                login['legacy_email_placeholder'] = 1
             context={'bundle':{'user':login,'profile':{'first_name':row.get('first_name') or email,
                 'middle_name':row.get('middle_name'),'last_name':row.get('last_name') or ''}},
                 'conf':conf,'ledger':[],'warnings':[]}
+            if placeholder:
+                context['bundle']['profile']['first_name'] = row.get('first_name')
             target = load._user(context)
             from onerc_vmms_migrate.historical import mark
             mark(snapshot,'User',row['name'],'User',target,run_id)
             result['existing' if existed else 'loaded'] += 1
+            result['placeholder_accounts'] += int(placeholder)
             result['without_password'] += int(not password)
             # Account rows have a separate key so they never make the people
             # loader mistake an account-only phase for a completed person.

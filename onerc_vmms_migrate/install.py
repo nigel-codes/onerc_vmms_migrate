@@ -12,7 +12,14 @@ def after_install():
          'read_only':1,'insert_after':'institution'},
         {'fieldname':'legacy_qualification','fieldtype':'Small Text','label':'Original imported qualification text',
          'read_only':1,'insert_after':'qualification'},
+    ],'User':[
+        {'fieldname':'legacy_email_placeholder','fieldtype':'Check','label':'Imported placeholder email',
+         'read_only':1,'insert_after':'email',
+         'description':'Original account retained under a migration alias. Verify a real address before using email login or password reset.'},
     ],'Red Profile':[
+        {'fieldname':'legacy_email_placeholder','fieldtype':'Check','label':'Imported placeholder email',
+         'read_only':1,'insert_after':'email',
+         'description':'Assigned because no usable email was recorded. Verify a real address before using email-based login or notifications; existing source account state is retained.'},
         {'fieldname':'legacy_phone','fieldtype':'Small Text','label':'Original imported phone',
          'read_only':1,'insert_after':'phone'},
         {'fieldname':'legacy_untyped_id_number','fieldtype':'Data','label':'Legacy identifier (type not recorded)',

@@ -59,8 +59,17 @@ def _write_csv(directory: str, name: str, rows: list[dict]) -> str | None:
 def _build(source: Source):
 	snapshot = extract(source)
 	crosswalks = Crosswalks.read()
-	result = transform.build(snapshot, crosswalks, workspace.config(), datetime.date.fromisoformat(today()))
+	conf = workspace.config()
+	from onerc_vmms_migrate.placeholder_emails import prepare
+	prepare(snapshot, conf)
+	result = transform.build(snapshot, crosswalks, conf, datetime.date.fromisoformat(today()))
+	result["identity_review"] = _identity_rows(snapshot, result)
 	return snapshot, crosswalks, result
+
+
+def _identity_rows(snapshot, result):
+	from onerc_vmms_migrate.identity_review import rows
+	return rows(snapshot, result)
 
 
 # --- check ------------------------------------------------------------------
@@ -254,6 +263,9 @@ def _report_plan(run_id, cw, result) -> dict:
 	out = workspace.report_dir(run_id)
 	bundles = result["bundles"]
 	mapping_blocked = {row["person"] for row in result.get("mapping_issues", []) if row["severity"] == "error"}
+	for row in result.get("identity_review", []):
+		if row["person"] in mapping_blocked:
+			row["native_status"] = "blocked_pending_resolution"
 	ready = [b for b in bundles if not b["errors"] and b["key"] not in mapping_blocked]
 	rejects = [{"person": b["key"], "error": e} for b in bundles for e in b["errors"]]
 	warnings = [{"person": b["key"], "warning": w} for b in bundles for w in b["warnings"]]
@@ -267,9 +279,11 @@ def _report_plan(run_id, cw, result) -> dict:
 	_write_csv(out, "memberships_not_migrated.csv", skipped_memberships)
 	_write_csv(out, "crosswalk_problems.csv", cw.problems())
 	_write_csv(out, "mapping_issues.csv", result.get("mapping_issues", []))
+	_write_csv(out, "identity-review.csv", result.get("identity_review", []))
 
 	summary = {
 		"mapping_errors": sum(r["severity"] == "error" for r in result.get("mapping_issues", [])),
+		"identity_review_rows": len(result.get("identity_review", [])),
 		"mapping_review_items": sum(r["severity"] == "review" for r in result.get("mapping_issues", [])),
 		"people": len(bundles),
 		"ready": len(ready),
@@ -285,6 +299,26 @@ def _report_plan(run_id, cw, result) -> dict:
 	workspace.write_json(os.path.join(out, "plan.json"), summary)
 	_say(f"report: {out}", *(f"  {k}: {v}" for k, v in summary.items()))
 	return summary
+
+
+def identity_report():
+	"""Refresh private identity exceptions and exact recorded destination links."""
+	from onerc_vmms_migrate.identity_review import rows
+	with Source() as source:
+		snapshot, _cw, built = _build(source)
+	out = workspace.report_dir(_run_id("identity-review"))
+	review = write_identity_reconciliation(out, rows(snapshot, built))
+	return {"report": out, "rows": len(review), "issues": dict(Counter(row["issue_code"] for row in review))}
+
+
+def write_identity_reconciliation(out, rows):
+	from onerc_vmms_migrate.identity_review import with_targets
+	if not rows:
+		return []
+	ledger = frappe.get_all(loader.LEDGER, fields=["person_key", "source_doctype", "source_name", "target_doctype", "target_name"])
+	review = with_targets(rows, ledger)
+	_write_csv(out, "identity-reconciliation.csv", review)
+	return review
 
 
 # --- load -------------------------------------------------------------------
@@ -405,6 +439,7 @@ def reconcile(bundles=None):
 		with Source() as source:
 			_snapshot, _cw, result = _build(source)
 		bundles = result["bundles"]
+		write_identity_reconciliation(out, result.get("identity_review", []))
 
 	mismatches, checked = [], 0
 	for b in bundles:

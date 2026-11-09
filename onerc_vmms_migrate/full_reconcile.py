@@ -10,6 +10,7 @@ from onerc_vmms_migrate.history_model import archive_users
 
 
 def verify(snapshot):
+    from onerc_vmms_migrate.placeholder_emails import login_email
     source_id=str(snapshot['source'].get('source_id') or snapshot['source']['db_name'])
     rows=frappe.db.sql('''SELECT record_id,source_doctype,source_name,source_hash,conversion_status,
         target_doctype,target_name,SHA2(source_payload,256) AS payload_hash
@@ -49,7 +50,7 @@ def verify(snapshot):
     passwords_without_native_account=0
     for name,password in snapshot.get('password_hashes',{}).items():
         user=snapshot['users'][name]
-        email=normalise.email(user.get('email')) or normalise.email(name)
+        email=login_email(snapshot,user)
         if not email:
             passwords_without_native_account+=1
             continue
@@ -69,6 +70,8 @@ def verify(snapshot):
 
 def execute():
     with Source() as source:
+        from onerc_vmms_migrate.placeholder_emails import prepare
+        prepare(source.data, workspace.config())
         summary,failures=verify(source.data)
         directory=workspace.report_dir(run._run_id('full-reconcile'))
         run._write_csv(directory,'mismatches.csv',failures)

@@ -85,7 +85,11 @@ def execute(confirm=None, limit=None, progress=None):
             result['failed']+=account_result['total']-account_total-len(excluded_accounts)
             if progress:progress({'phase':'people'})
             crosswalks=Crosswalks.read()
+            from onerc_vmms_migrate.placeholder_emails import prepare
+            from onerc_vmms_migrate.identity_review import rows as identity_rows
+            prepare(snapshot,conf)
             built=transform.build(snapshot,crosswalks,conf,datetime.date.fromisoformat(today()))
+            built['identity_review']=identity_rows(snapshot,built)
             run._report_plan(run_id,crosswalks,built)
             bundles=built['bundles'][:int(limit)] if limit else built['bundles']
             snapshot['excluded_native_identities']={(dt,name) for b in bundles if b['errors'] for dt,name in b['sources'] if dt!='User'}

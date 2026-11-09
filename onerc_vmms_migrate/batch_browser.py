@@ -162,6 +162,8 @@ def initialize(action, size, conf, source):
 	checks = run.selftest()
 	if not checks.get("passed"):
 		frappe.throw("The application self-test failed. Review its report before starting batches.")
+	from onerc_vmms_migrate.placeholder_emails import prepare
+	prepare(source.data, conf)
 	value = {
 		"session_id": uuid.uuid4().hex,
 		"mode": "test" if action == "batch_test" else "import",

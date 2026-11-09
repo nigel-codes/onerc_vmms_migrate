@@ -42,6 +42,7 @@ PROFILE_SCALARS = (
 	"legacy_phone",
 	"legacy_untyped_id_number",
 	"legacy_identity_claims",
+	"legacy_email_placeholder",
 	"first_name",
 	"middle_name",
 	"last_name",
@@ -166,6 +167,11 @@ def _user(ctx) -> str | None:
 	email = login["email"]
 
 	if frappe.db.exists("User", email):
+		if login.get("legacy_email_placeholder") and not frappe.db.exists(LEDGER, {
+			"source_doctype": "User", "source_name": login["source_name"],
+			"target_doctype": "User", "target_name": email,
+		}):
+			raise ValueError("A migration placeholder login is already claimed without the original source mapping; resolve it before importing.")
 		if ctx["conf"].get("preserve_passwords") and login.get("password_hash"):
 			import hmac
 
@@ -194,6 +200,10 @@ def _user(ctx) -> str | None:
 		}
 	)
 	user.flags.no_welcome_mail = True
+	if login.get("legacy_email_placeholder"):
+		if not frappe.get_meta("User").has_field("legacy_email_placeholder"):
+			raise ValueError("Install the migration placeholder marker on User before importing aliases.")
+		user.legacy_email_placeholder = 1
 	if "buzz" in frappe.get_installed_apps():
 		# Buzz grants this basic portal role to every new user. Include the same
 		# role in the first native insert, avoiding its redundant second save.
@@ -252,6 +262,9 @@ def _profile(ctx, user) -> str:
 	existing = frappe.db.get_value("Red Profile", {"email": data["email"]}) or (
 		user and frappe.db.get_value("Red Profile", {"user": user})
 	)
+	own_login = user and user == data["email"] and (bundle.get("user") or {}).get("legacy_email_placeholder")
+	if data.get("legacy_email_placeholder") and (existing or (not own_login and frappe.db.exists("User", data["email"]))):
+		raise ValueError("A migration placeholder address is already claimed on the destination; resolve it before importing.")
 
 	if existing:
 		doc = frappe.get_doc("Red Profile", existing)

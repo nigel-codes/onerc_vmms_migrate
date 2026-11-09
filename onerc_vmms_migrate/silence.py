@@ -35,6 +35,29 @@ def _noop(returns):
 
 
 @contextmanager
+def synchronous_contacts():
+	"""Create native User contacts in the person's transaction, without queue growth.
+
+	User insert and role updates each enqueue this same derived contact. An
+	unattended import otherwise fills the shared default queue and every later
+	User insert fails. Native contact validation still runs, and a person rollback
+	also rolls their contact back. All other background jobs keep their behavior.
+	"""
+	original = frappe.enqueue
+
+	def enqueue(method, *args, **kwargs):
+		if method == "frappe.core.doctype.user.user.create_contact":
+			kwargs.update(now=True, enqueue_after_commit=False)
+		return original(method, *args, **kwargs)
+
+	try:
+		frappe.enqueue = enqueue
+		yield
+	finally:
+		frappe.enqueue = original
+
+
+@contextmanager
 def silenced():
 	from vmmsx.notifications.services import direct, lifecycle, sms
 
@@ -50,7 +73,8 @@ def silenced():
 		frappe.flags.mute_emails = True
 		for module, name, replacement in replaced:
 			setattr(module, name, replacement)
-		yield
+		with synchronous_contacts():
+			yield
 	finally:
 		for module, name, original in originals:
 			setattr(module, name, original)

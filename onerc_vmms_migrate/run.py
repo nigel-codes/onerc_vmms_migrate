@@ -327,11 +327,13 @@ def write_identity_reconciliation(out, rows):
 
 
 def load(confirm: str | None = None, limit: int | None = None, only: str | None = None,
-		local_people: bool = False, progress=None):
+		local_people: bool = False, progress=None, defer_files: bool = False):
 	"""Load every ready person. Rehearses unless confirm == "LOAD"."""
 	dry_run = confirm != "LOAD"
 	run_id = _run_id("local-people" if local_people else "rehearsal" if dry_run else "load")
 	conf = workspace.config()
+	if defer_files:
+		conf = {**conf, "defer_profile_files": True}
 	if local_people:
 		if frappe.local.site != "kenyaclone.localhost":
 			raise ValueError("The reviewed local people milestone is restricted to kenyaclone.localhost.")
@@ -353,22 +355,22 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 		_snapshot, cw, result = _build(source, conf)
 		from onerc_vmms_migrate.continuity import require_profile_mapping
 		require_profile_mapping(_snapshot)
-		if _snapshot.get("capture_complete") is False and not local_people:
+		if _snapshot.get("capture_complete") is False and not (local_people or defer_files):
 			frappe.throw("This bulk capture has missing source files. Review missing-files.json and capture a corrected source snapshot before rehearsing or importing.")
 		plan_summary = _report_plan(run_id, cw, result)
 		out = workspace.report_dir(run_id)
 		_write_csv(out, "field-review.csv", [{"person": b["key"], **r}
 			for b in result["bundles"] for r in b.get("_review_values", [])])
-		deferred = [b for b in result["bundles"] if b["errors"] or (local_people and b.get("volunteer_excluded"))]
+		deferred = [b for b in result["bundles"] if b["errors"] or ((local_people or defer_files) and b.get("volunteer_excluded"))]
 		_write_csv(out, "deferred-identities.csv", [{"person": b["key"], "source_doctype": dt,
 			"source_name": name, "reason": " | ".join(b["errors"]) or "Shared volunteer identity requires reconciliation"}
 			for b in deferred for dt, name in b["sources"]])
-		if local_people:
+		if local_people or defer_files:
 			_write_csv(out, "source-file-exceptions.csv", [{"source_url": r.get("source_url"), "status": r.get("status"),
 				"reason": r.get("reason") or r.get("error") or "Source bytes require review"}
 				for r in _snapshot.get("all_file_manifest", {}).values() if r.get("status") != "ready"])
 
-		bundles = [b for b in result["bundles"] if not b["errors"] and not (local_people and b.get("volunteer_excluded"))]
+		bundles = [b for b in result["bundles"] if not b["errors"] and not ((local_people or defer_files) and b.get("volunteer_excluded"))]
 		if only:
 			bundles = [b for b in bundles if b["key"] == only.strip().lower()]
 		if limit:
@@ -439,7 +441,7 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 	_write_csv(out, "already_migrated.csv", skipped)
 
 	summary = {
-		"mode": "REHEARSAL (rolled back)" if dry_run else "LOCAL PEOPLE IMPORT" if local_people else "LOAD (committed)",
+		"mode": "REHEARSAL (rolled back)" if dry_run else "LOCAL PEOPLE IMPORT" if local_people else "PEOPLE IMPORT (attachments deferred)" if defer_files else "LOAD (committed)",
 		"attempted": len(bundles),
 		"loaded": len(loaded),
 		"failed": len(failed),
@@ -447,7 +449,8 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 		"changed_since_migrated": sum(1 for s in skipped if s["changed_since"]),
 		"rejected_before_load": plan_summary["rejected"],
 		"deferred_identity_groups": len(deferred),
-		"full_migration_qualified": False if local_people else None,
+		"full_migration_qualified": False if local_people or defer_files else None,
+		"attachments_deferred": bool(defer_files),
 	}
 	workspace.write_json(os.path.join(out, "load.json"), summary)
 	_say("", *(f"  {k}: {v}" for k, v in summary.items()), f"report: {out}")

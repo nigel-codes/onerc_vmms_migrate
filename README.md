@@ -4,7 +4,7 @@ The approved missing-email aliases and per-source identity reports are described
 in [IDENTITY_RECONCILIATION.md](IDENTITY_RECONCILIATION.md). Placeholder addresses
 do not create login credentials or waive native name/identity constraints.
 
-See [PREPARATION_STATUS.md](PREPARATION_STATUS.md) for the continuity work prepared on 4 November 2026, verification scope and the remaining cutover requirements. This code has not been installed or run against kenyaredcross.localhost. Historical payment allocations and legacy history presentation still require review/integration.
+See [PEOPLE_PRELOAD.md](PEOPLE_PRELOAD.md) for the people-first import, queue fix, attachment deferral and hosted deployment boundaries. [PREPARATION_STATUS.md](PREPARATION_STATUS.md) records earlier continuity preparation and remaining cutover requirements. This code has not been installed or run against kenyaredcross.localhost. Historical payment allocations and legacy history presentation still require review/integration.
 
 Install on the **new Redhive site**, alongside `erpnext`, `onerc_core`, `vmmsx` and `buzz`.
 Install companion `onerc_vmms_export` on the **old v15 VMMS site**.

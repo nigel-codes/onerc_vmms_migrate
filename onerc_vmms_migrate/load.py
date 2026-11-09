@@ -377,6 +377,9 @@ def _files(ctx, profile: str) -> None:
 	files = ctx["bundle"]["files"]
 	if not files:
 		return
+	if ctx.get("conf", {}).get("defer_profile_files"):
+		ctx["warnings"].append(f"{len(files)} profile attachments deferred; original references remain in the capture")
+		return
 
 	doc = frappe.get_doc("Red Profile", profile)
 	changed = False

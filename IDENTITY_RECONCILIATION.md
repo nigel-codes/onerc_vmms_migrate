@@ -71,7 +71,12 @@ record validity. The existing native reconciliation still checks record values.
 Reports do not label an archived record or mapping candidate as a usable native
 account. This change reports missing names and conflicting public identities;
 it does **not** bypass native mandatory names or unique profile/affiliation
-constraints. Their historical compatibility handling remains pending. The known
-`Relationship: Not recorded` native self-test failure is also separate and
-continues to block the full pipeline. No full import is authorized by a passing
-unit test or an alias preparation report.
+constraints. Their historical compatibility handling remains pending.
+
+The receiver handles missing emergency-contact relationships by retaining the
+contact under an explicit `Not recorded` lookup. It creates that lookup inactive
+when needed, so new registrations do not offer it, and does not change existing
+society relationship entries. The missing field is reported for correction;
+no actual relationship or contact consent is inferred. This resolved the
+57-check native self-test on the clone. Passing the self-test or alias checks
+does not certify the full source-data migration.

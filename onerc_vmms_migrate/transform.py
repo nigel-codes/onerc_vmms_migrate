@@ -31,6 +31,7 @@ from collections import defaultdict
 from onerc_vmms_migrate import normalise, profile_mapping, child_mapping
 from onerc_vmms_migrate.history_model import membership_state
 from onerc_vmms_migrate.crosswalk import DROP, UNMAPPED, Crosswalks
+from onerc_vmms_migrate.emergency_contacts import UNKNOWN_RELATIONSHIP
 
 # Deepest first. The first one the crosswalk maps is where the person lives.
 RESIDENCE_FIELDS = ("sub_location", "administrative_location", "ward", "sub_county", "county")
@@ -695,10 +696,13 @@ def _contacts_and_answers(b, employee, u, a, cw, conf) -> tuple[list, list]:
 	contact_name = normalise.text(employee.get("person_to_be_contacted"))
 	contact_phone = normalise.phone(employee.get("emergency_phone_number"), conf.get("default_country_code"))
 	if contact_name and contact_phone:
+		relationship = normalise.text(employee.get("relation"))
+		if not relationship:
+			b["warnings"].append("Emergency contact relationship was not recorded; contact retained under an explicit legacy value for correction")
 		contacts.append(
 			{
 				"contact_name": contact_name,
-				"relationship": normalise.text(employee.get("relation")) or "Not recorded",
+				"relationship": relationship or UNKNOWN_RELATIONSHIP,
 				"primary_phone": contact_phone,
 				"may_contact_in_emergency": 1 if conf.get("emergency_contact_may_call") else 0,
 			}

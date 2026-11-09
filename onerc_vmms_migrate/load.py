@@ -349,6 +349,8 @@ def _review_emergency_contacts(ctx, rows):
 			continue
 		_check_phone(ctx, row, "alternative_phone", f"emergency_contacts[{index}].alternative_phone", society=False)
 		retained.append(row)
+	from onerc_vmms_migrate.emergency_contacts import prepare
+	prepare(retained)
 	return retained
 
 

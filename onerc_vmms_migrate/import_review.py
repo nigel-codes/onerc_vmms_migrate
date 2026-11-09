@@ -20,6 +20,21 @@ def finalise(bundle):
         bundle["profile"][REVIEW_FIELD] = json.dumps(bundle["_review_values"], ensure_ascii=False, sort_keys=True, default=str)
 
 
+def prepare_dates(bundle, schemas, pairs, ends_before):
+    """Use the installed product's date rules; preserve rejected ends for review."""
+    for table, heading, start, start_label, end, end_label, open_flag, years in pairs:
+        child_type = schemas.get("Red Profile", {}).get(table, {}).get("options", table)
+        for index, row in enumerate(bundle["profile"].get(table) or [], 1):
+            if open_flag and row.get(open_flag):
+                continue
+            if table == "vmms_certifications" and "expire" in schemas.get(child_type, {}) and not row.get("expire"):
+                continue
+            if ends_before(row.get(start), row.get(end), years):
+                record(bundle, f"{table}[{index}].{end}", row[end],
+                    f"{end_label} precedes recorded {start_label} ({row[start]})")
+                row[end] = None
+
+
 def prepare_bundle(bundle, schemas, phone_check=None):
     def walk(doctype, values, prefix=""):
         fields = schemas.get(doctype, {})
@@ -48,6 +63,7 @@ def prepare_installed(result, conf):
         return
     import frappe
     from onerc_vmms_migrate import load
+    from vmmsx.registration.services.dates import PAIRS, ends_before
 
     schemas, pending = {}, ["Red Profile"]
     while pending:
@@ -58,6 +74,7 @@ def prepare_installed(result, conf):
         pending.extend(f["options"] for f in schemas[doctype].values()
             if f.get("fieldtype") in ("Table", "Table MultiSelect") and f.get("options") and f["options"] not in schemas)
     for bundle in result["bundles"]:
+        prepare_dates(bundle, schemas, PAIRS, ends_before)
         prepare_bundle(bundle, schemas, phone_check=frappe.utils.validate_phone_number)
         context = {"conf": {**conf, "drop_invalid_phones": True}, "warnings": []}
         load._review_profile_phones(context, bundle["profile"])

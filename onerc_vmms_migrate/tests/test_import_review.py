@@ -49,6 +49,23 @@ class TestHistoricalReviewValues(TestCase):
         self.assertEqual(profile["home_geo_node"], "GEO-NBI-COUNTY")
         self.assertFalse(any(profile.get(f) for f in ("vmms_residence_ward", "vmms_residence_location", "vmms_residence_sub_location")))
 
+    def test_reversed_training_dates_keep_the_row_and_record_the_original_end_date(self):
+        bundle = {"profile": {"vmms_training": [{"started_on": "2020-06-01", "completed_on": "2019-06-01"}]}, "warnings": []}
+        pairs = [("vmms_training", "Training", "started_on", "Started", "completed_on", "Completed", None, False)]
+        import_review.prepare_dates(bundle, {}, pairs, lambda start, end, years: bool(start and end and end < start))
+        self.assertEqual(bundle["profile"]["vmms_training"][0]["started_on"], "2020-06-01")
+        self.assertIsNone(bundle["profile"]["vmms_training"][0]["completed_on"])
+        self.assertEqual(bundle["_review_values"][0]["original_value"], "2019-06-01")
+        self.assertEqual(bundle["_review_values"][0]["field"], "vmms_training[1].completed_on")
+
+    def test_valid_and_open_ended_dates_are_preserved(self):
+        rows = [{"start": "2020", "end": "2021"}, {"start": "2020", "end": "2019", "is_current": 1}]
+        bundle = {"profile": {"experience": rows}, "warnings": []}
+        pairs = [("experience", "Experience", "start", "From", "end", "To", "is_current", True)]
+        import_review.prepare_dates(bundle, {}, pairs, lambda start, end, years: end < start)
+        self.assertEqual([r["end"] for r in rows], ["2021", "2019"])
+        self.assertNotIn("_review_values", bundle)
+
 
 class MandatoryBase:
     def _get_missing_mandatory_fields(self):

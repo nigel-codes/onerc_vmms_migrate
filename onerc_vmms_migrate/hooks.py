@@ -13,6 +13,8 @@ required_apps = ["erpnext", "onerc_core", "vmmsx", "buzz"]
 
 extend_doctype_class = {
     "Email Queue": ["onerc_vmms_migrate.placeholder_mail.PlaceholderEmailGuard"],
+    "Red Profile": ["onerc_vmms_migrate.import_review.ImportedNamesMixin"],
+    "User": ["onerc_vmms_migrate.import_review.ImportedNamesMixin"],
 }
 
 # Send non-GET requests for this app's endpoints as native `application/json`

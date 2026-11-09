@@ -35,6 +35,8 @@ def choice(value, options):
 
 def personal_details(bundle, profile, user, employee, applicant, conf):
 	for source, target in DIRECT_SCALARS.items():
+		if source in ("county", "sub_county", "ward", "administrative_location", "sub_location") and source not in conf.get("residence_levels", DIRECT_SCALARS):
+			continue
 		# Employee has blood_group; the other registration answers belong to
 		# User/Applicant. Preserve this explicit source precedence.
 		records = (user, applicant, employee) if source == "blood_group" else (user, applicant)
@@ -43,6 +45,11 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 			continue
 		if source == "number_of_dependants":
 			if isinstance(value, bool) or not re.fullmatch(r"\d+", str(value).strip()):
+				if conf.get("import_with_review"):
+					from onerc_vmms_migrate.import_review import record
+					record(bundle, target, value, "not a non-negative whole number")
+					profile["vmms_dependants_answered"] = 0
+					continue
 				bundle["errors"].append(
 					"number_of_dependants is not a non-negative whole number; original retained"
 				)
@@ -76,6 +83,10 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 			except ValueError:
 				valid = False
 			if not valid:
+				if conf.get("import_with_review"):
+					from onerc_vmms_migrate.import_review import record
+					record(bundle, target, value, "not a supported profile URL")
+					continue
 				bundle["errors"].append(
 					source + " is not a supported http/https profile URL; original retained"
 				)

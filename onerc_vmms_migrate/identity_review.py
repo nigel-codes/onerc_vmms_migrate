@@ -59,7 +59,8 @@ def rows(snapshot, built):
             codes = []
             if aliases.get((dt, name), {}).get("is_placeholder"):
                 codes.append("placeholder_email")
-            if any("no first and last name" in e for e in bundle["errors"]):
+            if any("no first and last name" in e for e in bundle["errors"]) or any(
+                    r["field"] in ("first_name", "last_name") for r in bundle.get("_review_values", [])):
                 codes.append("missing_name")
             if dt == "Employee" and counts[dt] > 1:
                 codes.append("shared_volunteer_email")

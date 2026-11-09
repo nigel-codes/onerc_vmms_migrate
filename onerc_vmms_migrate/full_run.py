@@ -89,6 +89,8 @@ def execute(confirm=None, limit=None, progress=None):
             from onerc_vmms_migrate.identity_review import rows as identity_rows
             prepare(snapshot,conf)
             built=transform.build(snapshot,crosswalks,conf,datetime.date.fromisoformat(today()))
+            from onerc_vmms_migrate.import_review import prepare_installed
+            prepare_installed(built,conf)
             built['identity_review']=identity_rows(snapshot,built)
             run._report_plan(run_id,crosswalks,built)
             bundles=built['bundles'][:int(limit)] if limit else built['bundles']

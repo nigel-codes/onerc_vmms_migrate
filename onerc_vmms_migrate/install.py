@@ -17,6 +17,9 @@ def after_install():
          'read_only':1,'insert_after':'email',
          'description':'Original account retained under a migration alias. Verify a real address before using email login or password reset.'},
     ],'Red Profile':[
+        {'fieldname':'data_review_values','fieldtype':'Code','options':'JSON','label':'Information to review',
+         'read_only':1,'insert_after':'legacy_identity_claims',
+         'description':'Recorded information that needs correction. Original values remain available while the rest of the profile can be used.'},
         {'fieldname':'legacy_email_placeholder','fieldtype':'Check','label':'Imported placeholder email',
          'read_only':1,'insert_after':'email',
          'description':'Assigned because no usable email was recorded. Verify a real address before using email-based login or notifications; existing source account state is retained.'},

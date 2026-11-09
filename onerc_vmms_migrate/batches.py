@@ -123,6 +123,8 @@ def build(snapshot, conf, crosswalks=None):
 		conf,
 		datetime.date.fromisoformat(today()),
 	)
+	from onerc_vmms_migrate.import_review import prepare_installed
+	prepare_installed(built, conf)
 	built["identity_review"] = rows(snapshot, built)
 	return built
 

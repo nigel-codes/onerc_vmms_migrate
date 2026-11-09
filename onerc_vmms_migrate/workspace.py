@@ -40,6 +40,8 @@ DEFAULTS = {
 	"drop_invalid_phones": False,
 	# Explicitly approved legacy-only aliases; no login or password is invented.
 	"assign_missing_emails": False,
+	"import_with_review": False,
+	"residence_levels": ["sub_location", "administrative_location", "ward", "sub_county", "county"],
 	"allow_missing_history_dependencies": False,
 	# HRMS kept one emergency contact on the Employee. Whether the person agreed
 	# to that contact being called is not recorded there, so it is a decision.

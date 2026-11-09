@@ -43,6 +43,7 @@ PROFILE_SCALARS = (
 	"legacy_untyped_id_number",
 	"legacy_identity_claims",
 	"legacy_email_placeholder",
+	"data_review_values",
 	"first_name",
 	"middle_name",
 	"last_name",
@@ -154,6 +155,15 @@ def _ledger(ctx, source_doctype, source_name, target_doctype, target_name, outco
 	)
 
 
+def _name_proof(ctx, source_doctype, source_name, target_doctype, target_name):
+	"""Record provenance after native insert, before services reload a blank-name record."""
+	frappe.get_doc({"doctype": LEDGER, "person_key": ctx["bundle"].get("key") or "account:" + target_name,
+		"source_doctype": source_doctype, "source_name": source_name,
+		"target_doctype": target_doctype, "target_name": target_name, "outcome": "created",
+		"source_hash": ctx["bundle"].get("source_hash"), "run_id": ctx["run_id"],
+		"migrated_on": now_datetime()}).insert(ignore_permissions=True)
+
+
 # --- login ----------------------------------------------------------------------
 
 
@@ -222,10 +232,13 @@ def _user(ctx) -> str | None:
 	previous_import = frappe.flags.in_import
 	try:
 		frappe.flags.in_import = True
-		user.insert(ignore_permissions=True)
+		from onerc_vmms_migrate.import_review import insert_with_missing_names
+		missing_names = insert_with_missing_names(user, ctx["conf"].get("import_with_review"))
 	finally:
 		frappe.flags.in_import = previous_import
 		user.add_roles = original_add_roles
+	if missing_names:
+		_name_proof(ctx, "User", login["source_name"], "User", user.name)
 
 	if login["password_hash"]:
 		# A passlib hash, independent of either site's encryption key, so the
@@ -296,7 +309,10 @@ def _profile(ctx, user) -> str:
 			values[field] = _clean_rows(data[field])
 
 	doc = frappe.get_doc(values)
-	doc.insert(ignore_permissions=True)
+	from onerc_vmms_migrate.import_review import insert_with_missing_names
+	missing_names = insert_with_missing_names(doc, ctx["conf"].get("import_with_review"))
+	if missing_names:
+		_name_proof(ctx, "Person", bundle["key"], "Red Profile", doc.name)
 	_ledger(ctx, "Person", bundle["key"], "Red Profile", doc.name)
 	return doc.name
 

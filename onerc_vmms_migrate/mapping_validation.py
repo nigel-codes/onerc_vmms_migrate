@@ -160,4 +160,8 @@ def installed_issues(bundles, conf=None):
 		for row in rows:
 			if row["code"] == "invalid_phone":
 				row["severity"] = "review"
+	if (conf or {}).get("import_with_review"):
+		for row in rows:
+			if row["code"] == "missing_required_value" and row["field"] in ("Red Profile.first_name", "Red Profile.last_name"):
+				row["severity"] = "review"
 	return rows

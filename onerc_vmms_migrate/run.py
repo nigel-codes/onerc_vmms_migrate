@@ -56,13 +56,15 @@ def _write_csv(directory: str, name: str, rows: list[dict]) -> str | None:
 	return path
 
 
-def _build(source: Source):
+def _build(source: Source, conf=None):
 	snapshot = extract(source)
 	crosswalks = Crosswalks.read()
-	conf = workspace.config()
+	conf = conf if conf is not None else workspace.config()
 	from onerc_vmms_migrate.placeholder_emails import prepare
 	prepare(snapshot, conf)
 	result = transform.build(snapshot, crosswalks, conf, datetime.date.fromisoformat(today()))
+	from onerc_vmms_migrate.import_review import prepare_installed
+	prepare_installed(result, conf)
 	result["identity_review"] = _identity_rows(snapshot, result)
 	return snapshot, crosswalks, result
 
@@ -324,11 +326,17 @@ def write_identity_reconciliation(out, rows):
 # --- load -------------------------------------------------------------------
 
 
-def load(confirm: str | None = None, limit: int | None = None, only: str | None = None):
+def load(confirm: str | None = None, limit: int | None = None, only: str | None = None,
+		local_people: bool = False, progress=None):
 	"""Load every ready person. Rehearses unless confirm == "LOAD"."""
 	dry_run = confirm != "LOAD"
-	run_id = _run_id("rehearsal" if dry_run else "load")
+	run_id = _run_id("local-people" if local_people else "rehearsal" if dry_run else "load")
 	conf = workspace.config()
+	if local_people:
+		if frappe.local.site != "kenyaclone.localhost":
+			raise ValueError("The reviewed local people milestone is restricted to kenyaclone.localhost.")
+		conf = {**conf, "import_with_review": True, "drop_invalid_phones": True,
+			"allow_missing_files": True, "residence_levels": ["sub_county", "county"]}
 
 	if not dry_run:
 		from frappe.utils.scheduler import is_scheduler_disabled
@@ -342,24 +350,40 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 	frappe.db.commit()  # nothing of ours is pending; start each person on a clean transaction
 
 	with Source(conf) as source:
-		_snapshot, cw, result = _build(source)
+		_snapshot, cw, result = _build(source, conf)
 		from onerc_vmms_migrate.continuity import require_profile_mapping
 		require_profile_mapping(_snapshot)
-		if _snapshot.get("capture_complete") is False:
+		if _snapshot.get("capture_complete") is False and not local_people:
 			frappe.throw("This bulk capture has missing source files. Review missing-files.json and capture a corrected source snapshot before rehearsing or importing.")
 		plan_summary = _report_plan(run_id, cw, result)
 		out = workspace.report_dir(run_id)
+		_write_csv(out, "field-review.csv", [{"person": b["key"], **r}
+			for b in result["bundles"] for r in b.get("_review_values", [])])
+		deferred = [b for b in result["bundles"] if b["errors"] or (local_people and b.get("volunteer_excluded"))]
+		_write_csv(out, "deferred-identities.csv", [{"person": b["key"], "source_doctype": dt,
+			"source_name": name, "reason": " | ".join(b["errors"]) or "Shared volunteer identity requires reconciliation"}
+			for b in deferred for dt, name in b["sources"]])
+		if local_people:
+			_write_csv(out, "source-file-exceptions.csv", [{"source_url": r.get("source_url"), "status": r.get("status"),
+				"reason": r.get("reason") or r.get("error") or "Source bytes require review"}
+				for r in _snapshot.get("all_file_manifest", {}).values() if r.get("status") != "ready"])
 
-		bundles = [b for b in result["bundles"] if not b["errors"]]
+		bundles = [b for b in result["bundles"] if not b["errors"] and not (local_people and b.get("volunteer_excluded"))]
 		if only:
 			bundles = [b for b in bundles if b["key"] == only.strip().lower()]
 		if limit:
 			bundles = bundles[: int(limit)]
 
 		loaded, failed, skipped = [], [], []
+		if progress:
+			progress({"phase": "people", "processed": 0, "total": len(bundles), "loaded": 0,
+				"failed": 0, "deferred_identity_groups": len(deferred), "report": out})
 
 		with silenced():
-			for bundle in bundles:
+			for index, bundle in enumerate(bundles, 1):
+				if progress and index % 25 == 0:
+					progress({"phase": "people", "processed": index - 1, "total": len(bundles),
+						"loaded": len(loaded), "failed": len(failed), "existing": len(skipped), "report": out})
 				done = loader.already_migrated(bundle["key"])
 				if done:
 					changed = done.source_hash != bundle["source_hash"]
@@ -391,6 +415,7 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 							else "",
 						}
 					)
+					_write_csv(out, "load_failures.csv", failed)
 					continue
 
 				if dry_run:
@@ -414,13 +439,15 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 	_write_csv(out, "already_migrated.csv", skipped)
 
 	summary = {
-		"mode": "REHEARSAL (rolled back)" if dry_run else "LOAD (committed)",
+		"mode": "REHEARSAL (rolled back)" if dry_run else "LOCAL PEOPLE IMPORT" if local_people else "LOAD (committed)",
 		"attempted": len(bundles),
 		"loaded": len(loaded),
 		"failed": len(failed),
 		"already_migrated": len(skipped),
 		"changed_since_migrated": sum(1 for s in skipped if s["changed_since"]),
 		"rejected_before_load": plan_summary["rejected"],
+		"deferred_identity_groups": len(deferred),
+		"full_migration_qualified": False if local_people else None,
 	}
 	workspace.write_json(os.path.join(out, "load.json"), summary)
 	_say("", *(f"  {k}: {v}" for k, v in summary.items()), f"report: {out}")

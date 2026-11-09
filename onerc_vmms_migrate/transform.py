@@ -245,6 +245,8 @@ def _bundle(email, person, snapshot, cw: Crosswalks, conf, today) -> dict:
 		b["sources"].append(("VM Member", record["name"]))
 
 	b["profile"] = _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, today)
+	from onerc_vmms_migrate.import_review import finalise
+	finalise(b)
 	if any(r["email"] == email and r.get("is_placeholder") for r in snapshot.get("_migration_identity_emails", [])):
 		b["profile"]["legacy_email_placeholder"] = 1
 		b["warnings"].append("Placeholder email assigned; outbound email is blocked until a real address is verified. Only an existing source login can transfer.")
@@ -301,8 +303,23 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 	)
 
 	if not names:
-		b["errors"].append("no first and last name anywhere (core requires both)")
-		names = ("", "", "")
+		if conf.get("import_with_review"):
+			from onerc_vmms_migrate.import_review import record
+			names = next((tuple(normalise.text(r.get(f)) for f in fields) for r, fields in (
+				(u, ("first_name", "middle_name", "last_name")),
+				(e, ("first_name", "middle_name", "last_name")),
+				(a, ("first_name", "other_names", "surname")))
+				if any(normalise.text(r.get(f)) for f in fields)), None)
+			if not names:
+				full = _first(a.get("applicant_name"), e.get("employee_name"),
+					*(m.get("member_name") for m in person["members"]))
+				names = (normalise.text(full), "", "")
+			for field, value in zip(("first_name", "middle_name", "last_name"), names):
+				if field != "middle_name" and not value:
+					record(b, field, value, "name was not recorded", "kept blank")
+		else:
+			b["errors"].append("no first and last name anywhere (core requires both)")
+			names = ("", "", "")
 
 	profile = {
 		"email": email,
@@ -346,6 +363,8 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 
 	# Residence: deepest mapped node, from the portal's copy first.
 	for field in RESIDENCE_FIELDS:
+		if field not in conf.get("residence_levels", RESIDENCE_FIELDS):
+			continue
 		value = _first(u.get(field), a.get(field))
 		if not value:
 			continue

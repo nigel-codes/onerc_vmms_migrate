@@ -43,7 +43,9 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
                 login['legacy_email_placeholder'] = 1
             context={'bundle':{'user':login,'profile':{'first_name':row.get('first_name') or email,
                 'middle_name':row.get('middle_name'),'last_name':row.get('last_name') or ''}},
-                'conf':conf,'ledger':[],'warnings':[]}
+                'conf':conf,'ledger':[],'warnings':[],'run_id':run_id}
+            context['bundle']['key']='account:'+email
+            context['bundle']['source_hash']=hashlib.sha256(canonical(row).encode()).hexdigest()
             if placeholder:
                 context['bundle']['profile']['first_name'] = row.get('first_name')
             target = load._user(context)

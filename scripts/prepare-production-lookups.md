@@ -8,7 +8,7 @@ The script is pinned to `https://kenyaredcross.jh.frappe.cloud` and capture `b09
 
 1. Open the **new site's** VMMS Migration Settings and your browser's developer console.
 2. Paste the entire `prepare-production-lookups.browser.js` file. Loading runs a **read-only preview** and prints counts by vocabulary. It does not create records.
-3. Review `vmmsLookupPrep.report`, especially `held` and any `blocked` vocabulary.
+3. Review `vmmsLookupPrep.report.proposed` for each value that would be created or reused, and `vmmsLookupPrep.report.held` for exceptions. A `blocked` vocabulary needs its invalid existing mappings reviewed first.
 4. Add the supported missing reference records with:
 
    ```js
@@ -37,7 +37,7 @@ Supported vocabularies: skills, education levels, driving licence classes, ident
 
 Source values are read through the installed migration app's mapping API. Existing labels and identities are checked against the destination's actual metadata and paginated lookup lists. An unambiguous existing label is reused. Existing values, active/inactive flags, explicit mappings and omissions are not changed. New keys follow the companion's deterministic lookup-key scheme. Unknown spoken languages receive disabled private-use codes, rather than being enabled as interface locales.
 
-Inserts use Frappe's normal client API, native permissions and validation. No permission bypass flags are sent. The script holds ambiguous labels, occupied identifiers with different labels, overlong or HTML-like text, missing additional mandatory fields, missing create permission and invalid existing mapping targets. It stops on unexpected write failures. Held items remain in the captured source and require review; they are not silently marked resolved.
+Inserts use Frappe's normal client API, native permissions and validation. No permission bypass flags are sent. The script holds ambiguous labels, occupied identifiers with different labels, overlong or HTML-like text, contact/URL/long-identifier-like text, missing additional mandatory fields, missing create permission and invalid existing mapping targets. The contact-text check helps prevent private free-form profile text becoming a shared selection; it does not establish that every remaining label is appropriate, so review the proposed values. It stops on unexpected write failures. Held items remain in the captured source and require review; they are not silently marked resolved.
 
 It does not create geography, membership types/pricing, accounts, profiles, volunteers, members, roles or payments. Geography should come from the approved canonical Kenya seed. Membership type and pricing setup must use reviewed current source facts. It does not edit application code, site configuration, source data or mapping files, and does not start an import or assert final migration readiness.
 

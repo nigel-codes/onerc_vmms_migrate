@@ -90,6 +90,9 @@
     const field = meta.fields.find(f => f.fieldname === label);
     if (String(doc[label]).length > Number(field?.length || 140)) return 'Label exceeds destination length; retained for manual review.';
     if (/<\/?[a-z][^>]*>/iu.test(doc[label])) return 'HTML-like source text requires manual review.';
+    if (/@|https?:\/\/|\bwww\./iu.test(doc[label]) ||
+        (String(doc[label]).match(/\+?\d[\d\s().-]*\d/gu) || []).some(value => value.replace(/\D/g, '').length >= 8))
+      return 'Contact/URL/identifier-like source text requires review before becoming a shared lookup.';
     const missing = meta.fields.filter(f => f.reqd && !text(f.default) && (doc[f.fieldname] == null || doc[f.fieldname] === ''));
     return missing.length ? 'Additional required fields: ' + missing.map(f => f.fieldname).join(', ') : '';
   }
@@ -97,12 +100,12 @@
     console.table(report.summary);
     console.info('Held items:', report.held.length, 'Failures:', report.failures.length,
       'Created:', report.created.length);
-    console.info('Full details: vmmsLookupPrep.report. Download: vmmsLookupPrep.downloadReport()');
+    console.info('Review proposed values: vmmsLookupPrep.report.proposed. Full details: vmmsLookupPrep.report. Download: vmmsLookupPrep.downloadReport()');
   }
   async function buildPlan() {
     await idleGuard();
     report = {site: ORIGIN, capture_id: CAPTURE, status: 'preview', started_utc: new Date().toISOString(),
-      summary: [], held: [], failures: [], created: [], reused: [],
+      summary: [], proposed: [], held: [], failures: [], created: [], reused: [],
       separate_scope: ['geography/branch/residence', 'membership types and pricing', 'people and memberships', 'roles and permissions', 'payments']};
     const groups = [];
     for (const spec of SPECS) {
@@ -142,7 +145,9 @@
         const matches = byLabel.get(key(value)) || [];
         if (matches.length > 1) { hold(value, 'Multiple destination records have this label.'); continue; }
         if (matches.length === 1) {
-          group.actions.push({source: row.source_value, value, target: matches[0].name}); summary.reuse++; continue;
+          group.actions.push({source: row.source_value, value, target: matches[0].name});
+          report.proposed.push({kind, source_value: row.source_value, action: 'reuse', target: matches[0].name});
+          summary.reuse++; continue;
         }
         const doc = await documentFor(spec, meta, label, value);
         const identityValue = String(doc.name || doc[identity] || doc[label]);
@@ -150,7 +155,9 @@
         if (reason) { hold(value, reason); continue; }
         if (!permission?.has_permission) { hold(value, 'Native create permission is unavailable.'); continue; }
         if (byName.has(key(identityValue))) { hold(value, 'Proposed identifier already belongs to another label.'); continue; }
-        group.actions.push({source: row.source_value, value, doc}); summary.create++;
+        group.actions.push({source: row.source_value, value, doc});
+        report.proposed.push({kind, source_value: row.source_value, action: 'create', target: identityValue});
+        summary.create++;
         const planned = {name: identityValue, [label]: value};
         byName.set(key(identityValue), planned); byLabel.set(key(value), [planned]);
       }

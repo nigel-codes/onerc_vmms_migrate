@@ -71,6 +71,7 @@ async function setup(options={}) {
 test('loading previews missing vocabulary without writing',async()=>{
   const e=await setup();assert.ifError(e.error);assert.equal(e.writes().length,0);
   assert.equal(e.api.report.summary.find(r=>r.kind==='skill').create,1);
+  assert.equal(e.api.report.proposed[0].source_value,'Recorded skill');
 });
 test('apply creates only allowlisted lookups and never changes mapping files',async()=>{
   const e=await setup();await e.api.apply();
@@ -155,4 +156,10 @@ test('stopping preserves completed inserts and a retry completes the remainder',
 });
 test('missing generated mapping values stop the script before writes',async()=>{
   const e=await setup({maps:{}});assert.match(e.error.message,/Generate mappings/);assert.equal(e.writes().length,0);
+});
+test('contact-like free text is held before becoming a globally readable lookup',async()=>{
+  const e=await setup({maps:{skill:[{source_value:'Contact person@example.org',target:''},{source_value:'Call 0712345678',target:''},
+    {source_value:'https://example.org/profile',target:''},{source_value:'ISO 27001:2022',target:''}]}});
+  await e.api.apply();assert.equal(e.api.report.held.length,3);assert.equal(e.records['VMMS Skill'].length,1);
+  assert.equal(e.records['VMMS Skill'][0].skill_name,'ISO 27001:2022');
 });

@@ -163,3 +163,8 @@ test('contact-like free text is held before becoming a globally readable lookup'
   await e.api.apply();assert.equal(e.api.report.held.length,3);assert.equal(e.records['VMMS Skill'].length,1);
   assert.equal(e.records['VMMS Skill'][0].skill_name,'ISO 27001:2022');
 });
+test('unexpected naming rules or label field types are held before insertion',async()=>{
+  for(const meta of [m=>{m['VMMS Skill'].autoname='naming_series:';},m=>{m['VMMS Skill'].fields[0].fieldtype='Link';}]){
+    const e=await setup({meta});await e.api.apply();assert.equal(e.writes().length,0);assert.equal(e.api.report.held.length,1);
+  }
+});

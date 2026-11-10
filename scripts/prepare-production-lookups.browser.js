@@ -88,6 +88,16 @@
   }
   function invalidReason(meta, label, doc) {
     const field = meta.fields.find(f => f.fieldname === label);
+    const namingField = String(meta.autoname || '').startsWith('field:') ? meta.autoname.slice(6) : '';
+    if (label === 'name' ? meta.autoname !== 'prompt' : !namingField || !text(doc[namingField]))
+      return 'Unexpected native naming rule; review the destination schema first.';
+    for (const [name, value] of Object.entries(doc)) {
+      if (name === 'doctype' || name === 'enabled') continue;
+      const native = meta.fields.find(f => f.fieldname === name);
+      if (name !== 'name' && native?.fieldtype !== 'Data') return 'Unexpected native field type: ' + name;
+      if (String(value).length > Number(native?.length || 140)) return 'Value exceeds destination field length: ' + name;
+    }
+    if (/[<>]/u.test(String(doc.name || doc[namingField]))) return 'Native identifier contains unsupported characters.';
     if (String(doc[label]).length > Number(field?.length || 140)) return 'Label exceeds destination length; retained for manual review.';
     if (/<\/?[a-z][^>]*>/iu.test(doc[label])) return 'HTML-like source text requires manual review.';
     if (/@|https?:\/\/|\bwww\./iu.test(doc[label]) ||

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3 — 2026-11-11
+
+- Create a missing County Coordinator Role Profile from the destination's existing, enabled County Coordinator role. Require native leadership-role setup if that role is absent; existing profiles are checked and never silently broadened.
+- Assign coordinator profiles through Frappe's current User.role_profiles child table. Keep each coordinator's approved extra staff roles and already-derived native portal roles in separate role bundles, so ordinary saves retain them without granting them to other coordinators.
+- Apply new people's account-role policy after native affiliation refreshes. Adopted destination accounts retain their existing roles. Existing batch checkpoints and code-only resume verification remain unchanged.
+
 ## 0.7.2 — 2026-11-11
 
 - Permit a blank modern payment Source only on marked historical memberships during trusted import, or on proven imported rows whose Source was already blank. Native mandatory fields remain enforced for ordinary registrations and other required values; Historical accounting exclusion is retained.

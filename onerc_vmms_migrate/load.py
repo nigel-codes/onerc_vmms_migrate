@@ -88,6 +88,7 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		"dry_run": dry_run,
 		"ledger": [],
 		"warnings": [],
+		"defer_account_roles": True,
 	}
 
 	if bundle.get("application"):
@@ -135,6 +136,11 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 			"VMMS Membership", {"member": member, "membership_status": "Active"}, pluck="name"
 		):
 			token.ensure(frappe.get_doc("VMMS Membership", name))
+	# Profiles synchronise their entire role union on save. Attach them only
+	# after native affiliations have granted the person's self-service roles.
+	if ctx.get("account_roles_pending"):
+		from onerc_vmms_migrate.account_roles import apply as apply_roles
+		apply_roles(frappe.get_doc("User", user), bundle["user"])
 
 	# refresh() may save the derived member status. Restore source timestamps
 	# after all native saves, without changing identity or derived membership.
@@ -267,7 +273,10 @@ def _user(ctx) -> str | None:
 		)
 
 	from onerc_vmms_migrate.account_roles import apply as apply_roles
-	apply_roles(user,login)
+	if ctx.get("defer_account_roles"):
+		ctx["account_roles_pending"] = True
+	else:
+		apply_roles(user,login)
 	_ledger(ctx, "User", login["source_name"], "User", user.name)
 	return user.name
 

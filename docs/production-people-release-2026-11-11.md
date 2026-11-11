@@ -118,3 +118,45 @@ Deploy receiver 0.7.1, keep the selected capture and saved mappings, and run Pla
 migration again. No new capture, lookup preparation or rehearsal is required for
 this fix. The full Python unit suite passes 333 tests; no production call or
 native app source change was made.
+
+
+## 0.7.2 follow-up — required membership Source and resuming a code update
+
+The first hosted people batch reported 46 loaded and four failed people. All four
+failures were native mandatory validation on VMMS Membership.membership_source.
+The accounting adapter deliberately leaves modern Source blank while storing
+Historical accounting status, but had not exempted that blank from the native
+required-field validator. A companion mixin now allows only this one field on a
+marked historical import. Later saves require a matching persisted historical
+marker, an originally blank Source and a created-membership ledger. Ordinary new
+memberships and other required fields retain native validation. No VMMSX source
+or existing person data is changed by installing this fix.
+
+The original people checkpoint is retained, including its zero retry cursor.
+Successful people in the partial batch were committed with the blocked checkpoint;
+failed people rolled back to their individual savepoints. Retrying the same page
+skips the successes by ledger and attempts only missing people. Attachments follow
+once the people page succeeds.
+
+After deploying receiver 0.7.2, hard-refresh Settings and use **Resume / retry
+batches**, size **50**, checking **I reviewed the deployed migration code update**.
+Keep the selected capture, mapping files, settings and placeholder assignments
+unchanged. Keep cutover isolation active. The first page still pauses after its
+files; **Continue people continuously** remains a later operator action.
+
+Code-only resume checks the pinned inputs independently of code. The already
+running 0.7.1 session stored only a combined inputs/code fingerprint. Its trusted
+release source is retained as compressed, non-executable bytes so the receiver can
+recompute the original combined fingerprint with current inputs before accepting
+this update. The baseline contains repository code only and is reproducible with
+scripts/build_resume_baseline.py from commit 6a3d44e. It is never imported or
+executed. Verification failure leaves the existing checkpoint intact. New sessions
+store inputs_fingerprint directly. Accepted code updates are recorded in the
+checkpoint's versions_reviewed/code_upgrades audit.
+
+Verification for 0.7.2: 346 Python tests pass, including the actual VMMSX required
+fields with Frappe's mandatory checker, historical insertion, normal-registration
+validation, a 46-existing/four-missing retry, and legacy code-only resume with
+changed mapping/configuration/placeholder rejection. Browser-dialog units and
+Settings JavaScript syntax checks pass. These are local code tests; the hosted
+batch facts above come from the operator's downloaded CSV/JSON reports.

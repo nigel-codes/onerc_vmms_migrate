@@ -32,6 +32,14 @@ def ensure(doctype, label_field, value, key_field=None, extra=None):
     return frappe.get_doc(data).insert(ignore_permissions=True).name
 
 
+def prepare_project_types(history):
+    labels = sorted({row['project_type'] for row in history.rows('Project') if row.get('project_type')})
+    return {
+        'resolved': {label: ensure('Project Type', 'project_type', label) for label in labels},
+        'labels_for_review': [label for label in labels if label in ('health', 'DPR 146')],
+    }
+
+
 def prepare(snapshot, conf=None):
     """Called explicitly before rehearsal. Every supplied mapping takes priority."""
     history = History(snapshot)
@@ -113,6 +121,7 @@ def prepare(snapshot, conf=None):
     # legacy application questions or generic-file crosswalk projections.
     for row in history.rows('TOR Methodology'):
         ensure('VMMS TOR Methodology','methodology_name',row['name'],'methodology_key')
+    report['project_types'] = prepare_project_types(history)
     from onerc_vmms_migrate.trees import batched_trees
     with batched_trees():
         geography(history, map_value, report)

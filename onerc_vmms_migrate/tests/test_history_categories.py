@@ -12,6 +12,7 @@ class TestSeededCategories(TestCase):
 		loader = object.__new__(Loader)
 		loader.snapshot = {}
 		loader.run_id = "test"
+		loader.naming = MagicMock()
 		loader.targets = {}
 		loader.results, loader.failures, loader.excluded, loader.warnings = [], [], [], []
 		loader.excluded_identities = set()

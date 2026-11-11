@@ -286,6 +286,10 @@ def work(snapshot, source, conf, value, progress):
 		failures = summary.pop("failed")
 		return summary.pop("processed"), len(snapshot["users"]), failures, summary
 	if phase == "people":
+		if "people_naming" not in value:
+			from onerc_vmms_migrate.naming_continuity import reserve_people
+
+			value["people_naming"] = reserve_people(snapshot)
 		return people(snapshot, source, conf, value, stop, progress)
 	if phase == "history":
 		from onerc_vmms_migrate.history_load import Loader

@@ -9,6 +9,13 @@ from onerc_vmms_migrate import historical
 
 
 class TestHistoricalInsert(TestCase):
+    def test_resolved_owner_is_written_with_the_document(self):
+        doc, child = self.document()
+        with patch.object(frappe, "new_doc", return_value=doc), patch.object(frappe, "db", SimpleNamespace(exists=lambda *args: False)):
+            historical.insert("VMMS Terms of Reference", {"creation": "2026-01-01"}, name="legacy-tor", owner="coordinator@example.test")
+        self.assertEqual(doc.owner, "coordinator@example.test")
+        self.assertEqual(child.owner, doc.owner)
+
     def document(self):
         child = SimpleNamespace(name=None, parent=None, parenttype=None,
             parentfield="objectives", get_invalid_links=lambda: ([], []), db_insert=MagicMock())

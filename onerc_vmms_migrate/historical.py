@@ -23,7 +23,7 @@ ALLOWED = {'VMMS Membership', 'VMMS Volunteer Application', 'VMMS Terms of Refer
            'Event Booking', 'Event Ticket', 'Event Check In', 'Buzz Custom Field'}
 
 
-def insert(doctype, values, name=None):
+def insert(doctype, values, name=None, *, owner=None):
     if doctype not in ALLOWED:
         raise ValueError('Historical insertion is not allowed for this doctype.')
     doc = frappe.new_doc(doctype)
@@ -43,7 +43,7 @@ def insert(doctype, values, name=None):
     doc.set_parent_in_children()
     if frappe.db.exists(doctype, doc.name):
         raise ValueError(f'{doctype} already contains this record; resolve the collision before importing.')
-    doc.owner = 'Administrator'
+    doc.owner = owner or 'Administrator'
     doc.creation = values.get('creation') or now_datetime()
     doc.modified = values.get('modified') or doc.creation
     doc.modified_by = 'Administrator'

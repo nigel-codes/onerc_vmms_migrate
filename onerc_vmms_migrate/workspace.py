@@ -85,6 +85,7 @@ def history_branch_overrides(value) -> dict:
 def config() -> frappe._dict:
 	conf = frappe._dict(DEFAULTS)
 	conf.update(frappe.conf.get(CONFIG_KEY) or {})
+	overrides = history_branch_overrides(conf.get("history_branch_overrides"))
 	if frappe.db.exists("DocType", "VMMS Migration Settings"):
 		settings = frappe.get_single("VMMS Migration Settings")
 		if settings.browser_capture:
@@ -94,7 +95,9 @@ def config() -> frappe._dict:
 					"default_country_code": settings.default_country_code,
 					"drop_invalid_phones": bool(settings.drop_invalid_phones),
 					"allow_missing_history_dependencies": bool(settings.get("allow_missing_history_dependencies")),
-					"history_branch_overrides": settings.get("history_branch_overrides"),
+					"history_branch_overrides": {
+						**overrides, **history_branch_overrides(settings.get("history_branch_overrides"))
+					},
 					"emergency_contact_may_call": bool(settings.emergency_contact_may_call),
 					"preserve_passwords": bool(settings.get("preserve_passwords")),
 					"allow_missing_files": bool(settings.get("allow_missing_files")),

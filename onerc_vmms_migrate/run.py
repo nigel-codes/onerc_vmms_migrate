@@ -376,6 +376,13 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 		if limit:
 			bundles = bundles[: int(limit)]
 
+		from onerc_vmms_migrate.naming_continuity import reserve_people
+
+		people_naming = None
+		if not dry_run:
+			people_naming = reserve_people(_snapshot)
+			frappe.db.commit()
+
 		loaded, failed, skipped = [], [], []
 		if progress:
 			progress({"phase": "people", "processed": 0, "total": len(bundles), "loaded": 0,
@@ -451,6 +458,7 @@ def load(confirm: str | None = None, limit: int | None = None, only: str | None 
 		"deferred_identity_groups": len(deferred),
 		"full_migration_qualified": False if local_people or defer_files else None,
 		"attachments_deferred": bool(defer_files),
+		"naming": people_naming,
 	}
 	workspace.write_json(os.path.join(out, "load.json"), summary)
 	_say("", *(f"  {k}: {v}" for k, v in summary.items()), f"report: {out}")

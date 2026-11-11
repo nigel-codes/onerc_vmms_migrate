@@ -84,6 +84,8 @@ def execute(confirm=None, limit=None, progress=None):
             account_total=account_result['loaded']+account_result['existing']
             result['failed']+=account_result['total']-account_total-len(excluded_accounts)
             if progress:progress({'phase':'people'})
+            from onerc_vmms_migrate.naming_continuity import reserve_people
+            result['people_naming'] = reserve_people(snapshot, dry_run=dry_run)
             crosswalks=Crosswalks.read()
             from onerc_vmms_migrate.placeholder_emails import prepare
             from onerc_vmms_migrate.identity_review import rows as identity_rows

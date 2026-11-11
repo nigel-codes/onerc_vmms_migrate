@@ -13,6 +13,10 @@ import frappe
 from onerc_vmms_migrate import historical, normalise, presentation
 from onerc_vmms_migrate.crosswalk import Crosswalks, UNMAPPED, DROP
 from onerc_vmms_migrate.history_model import History, assignment_state, application_state, key, split_name
+from onerc_vmms_migrate.naming_continuity import NamingContinuity
+
+
+OWNER_DOCTYPES = {"Project", "Task", "VMMS Terms of Reference"}
 
 
 class BatchBoundary(Exception):
@@ -58,6 +62,7 @@ class Loader:
             self.excluded_identities.add(identity)
             self.excluded_reasons[identity] = row.conversion_note
         self.dry_run = dry_run
+        self.naming = NamingContinuity(snapshot, dry_run=dry_run)
         self.by_source = {}
         for row in frappe.get_all('Legacy Migration Record',fields=['source_doctype','source_name','target_doctype','target_name']):
             self.by_source[(row.source_doctype,row.source_name,row.target_doctype)] = row.target_name
@@ -109,6 +114,8 @@ class Loader:
         identity = (source_dt, str(row['name']))
         old = self.converted_index.get(identity) if batched else historical.converted(self.snapshot,source_dt,row['name'])
         if old:
+            if name is not None:
+                self.naming.reserve(source_dt, target_dt, [old])
             self.targets[(source_dt,row['name'])]=old
             self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':old,'outcome':'existing'})
             return old
@@ -127,8 +134,11 @@ class Loader:
             doc = self.reuse_event_category(values, name) if source_dt == target_dt == 'Event Category' else None
             outcome = 'existing' if doc is not None else 'created'
             if doc is None:
-                doc=historical.insert(target_dt,values,name=name)
+                owner = self.source_owner(source_dt, row) if target_dt in OWNER_DOCTYPES else None
+                doc=historical.insert(target_dt,values,name=name,owner=owner)
             historical.mark(self.snapshot,source_dt,row['name'],target_dt,doc.name,self.run_id)
+            if name is not None:
+                self.naming.reserve(source_dt, target_dt, [doc.name])
             if batched:
                 self.converted_index[identity] = doc.name
             self.targets[(source_dt,row['name'])]=doc.name
@@ -191,6 +201,7 @@ class Loader:
                 if mapped:value=mapped
                 elif not frappe.db.exists(field.options,value):
                     if field.reqd:raise ValueError('Unresolved required '+field.options+' link')
+                    self.warn(doctype, row, f"Unresolved optional {field.options} link in {name}: {value}")
                     continue
             if field.fieldtype in ('Attach','Attach Image') and value and str(value).startswith(('/files/','/private/files/')):
                 # The general attachment phase restores these with real owners.
@@ -199,24 +210,69 @@ class Loader:
         values['docstatus']=int(row.get('docstatus') or 0)
         return values
 
+    def warn(self, doctype, row, message):
+        self.warnings.append({"source_doctype": doctype, "source_name": row["name"], "warning": message})
+
+    def source_owner(self, doctype, row):
+        owner = self.target("User", row.get("owner"), required=False)
+        if not owner or not frappe.db.exists("User", owner):
+            self.warn(doctype, row, f"Source owner could not be resolved ({row.get('owner') or 'blank'}); used Administrator")
+            return None
+        return owner
+
+    def project_link(self, doctype, row):
+        source = row.get("project")
+        project = self.target("Project", source, required=False)
+        if source and not project:
+            self.warn(doctype, row, f"Unresolved optional Project link in project: {source}")
+        return project
+
+    def project_department(self, doctype, row, company, abbreviation):
+        source = normalise.text(row.get("department"))
+        if not source:
+            return None
+        label = source.rsplit(" - ", 1)[0]
+        if abbreviation and company:
+            target = frappe.db.exists("Department", {"name": f"{label} - {abbreviation}", "company": company})
+            if target:
+                return target
+        self.warn(doctype, row, f"Unresolved optional Department link in department: {source}")
+        return None
+
     def projects(self):
+        from vmmsx.deployment.services.project import default_company
+
+        company = default_company()
+        abbreviation = frappe.db.get_value("Company", company, "abbr") if company else None
+        project_meta = frappe.get_meta("Project")
         for row in self.history.rows('Project'):
             def build(r):
-                values=self.copy_values('Project',r,omit=('company','cost_center','customer','sales_order','project_template','project_type','users'))
-                if frappe.get_meta('Project').has_field('vmms_geo_node'):
+                dates = ('expected_start_date', 'expected_end_date', 'actual_start_date', 'actual_end_date')
+                values=self.copy_values('Project',r,omit=('company','cost_center','customer','sales_order','project_template','users','department',*dates))
+                if project_meta.has_field('vmms_geo_node'):
                     values['vmms_geo_node']=self.geo(r.get('company'))
+                if company:
+                    values['company'] = company
+                if project_meta.has_field('department'):
+                    values['department'] = self.project_department("Project", r, company, abbreviation)
+                for field in dates:
+                    if project_meta.has_field(field) and field in r:
+                        values[field] = normalise.date(r[field])
                 # ERP financial accounts and customer IDs remain history; no
                 # chart of accounts is manufactured to satisfy an optional link.
                 return values
             self.one('Project',row,'Project',build,name=row['name'])
         # ERP tasks are project work items; no volunteer is guessed for them.
         pending=self.history.rows('Task')
+        task_meta = frappe.get_meta("Task")
         while pending:
             ready=[r for r in pending if not r.get('parent_task') or self.target('Task',r['parent_task'],required=False)]
             if not ready:ready=pending[:1]
             for row in ready:
                 def build(r):
                     values=self.copy_values('Task',r,omit=('company','department','issue','depends_on','type','parent_task','lft','rgt','old_parent'))
+                    if task_meta.has_field('department') and r.get('department'):
+                        values['department'] = self.project_department("Task", r, company, abbreviation)
                     if r.get('project'):values['project']=self.target('Project',r['project'])
                     if r.get('parent_task'):values['parent_task']=self.target('Task',r['parent_task'])
                     return values
@@ -255,7 +311,7 @@ class Loader:
         for row in self.history.rows('Personnel Terms of Reference'):
             def build(r):
                 values={'tor_name':r.get('title_of_mission'),'tor_key':'legacy_'+key('tor',r['name'])[:24],
-                    'geo_scope':self.geo(r.get('company')),'project':self.target('Project',r.get('project'),required=False),
+                    'geo_scope':self.geo(r.get('company')),'project':self.project_link('Personnel Terms of Reference', r),
                     'expected_start_date':r.get('expected_start_date'),'expected_end_date':r.get('expected_end_date'),
                     'mission_background':r.get('mission_background'),'approval_mode':'direct',
                     'docstatus':int(r.get('docstatus') or 0),'approval_state':{'Approved':'Approved','Draft':'Draft','Pending Approval':'Submitted'}.get(r.get('workflow_state'),'Draft'),
@@ -303,10 +359,11 @@ class Loader:
                         terms=historical.insert('VMMS Terms of Reference',{
                             'tor_key':tor_key,'tor_name':r.get('title') or r['name'],
                             'geo_scope':self.geo(r.get('company')),'is_active':0,'docstatus':0,
+                            'project':self.project_link('Deployment Request Tool', r),
                             'expected_start_date':r.get('expected_start_date'),'expected_end_date':r.get('expected_end_date'),
                             'approval_mode':'direct','approval_state':'Draft','legacy_unstructured_terms':1,
                             'legacy_terms_url':r.get('tor_url'),
-                            'notes':presentation.FILE_TERMS_NOTE}).name
+                            'notes':presentation.FILE_TERMS_NOTE},owner=self.source_owner('Deployment Request Tool', r)).name
                 else:
                     raise ValueError('Legacy deployment has neither structured terms nor an original terms document')
                 coordinator=self.target('User',r.get('owner'))
@@ -518,7 +575,7 @@ class Loader:
             'by_source':dict(Counter(r['source_doctype'] for r in self.results)),
             'failures':self.failures,'records':self.results,'excluded_count':len(self.excluded),
             'excluded_by_source':dict(Counter(r['source_doctype'] for r in self.excluded)),
-            'exclusions':self.excluded,'warnings':self.warnings}
+            'exclusions':self.excluded,'warnings':self.warnings,'naming':self.naming.report()}
 
 
     def run_batch(self, limit, deadline, progress=None):
@@ -528,6 +585,8 @@ class Loader:
         checked before inserting the next new record; genuine exceptions still
         escape and roll back the batch. No cursor depends on changing Task order.
         """
+        # Both live and test batches retain records on the destination.
+        self.naming.dry_run = False
         self.batch_limit, self.batch_deadline = limit, deadline
         self.batch_attempted, self.batch_progress = 0, progress
         source_id = str(self.snapshot['source'].get('source_id') or self.snapshot['source']['db_name'])
@@ -545,4 +604,4 @@ class Loader:
             'by_source':dict(Counter(r['source_doctype'] for r in self.results)),
             'failures':self.failures,'records':self.results,'excluded_count':len(self.excluded),
             'excluded_by_source':dict(Counter(r['source_doctype'] for r in self.excluded)),
-            'exclusions':self.excluded,'warnings':self.warnings}
+            'exclusions':self.excluded,'warnings':self.warnings,'naming':self.naming.report()}

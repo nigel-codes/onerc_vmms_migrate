@@ -1,12 +1,12 @@
 const migration_api = 'onerc_vmms_migrate.browser.';
-const mapping_kinds = ['branch', 'residence', 'membership_type', 'volunteer_status', 'gender', 'identification_type', 'supporting_document', 'disability', 'language', 'skill', 'profession', 'education_level', 'driving_licence_class', 'licence_type', 'question'];
+const mapping_kinds = ['internet_access', 'motivation', 'disability_status', 'marital_status', 'citizenship', 'branch', 'residence', 'membership_type', 'volunteer_status', 'gender', 'identification_type', 'supporting_document', 'disability', 'language', 'skill', 'profession', 'education_level', 'driving_licence_class', 'licence_type', 'question'];
 
 frappe.ui.form.on('VMMS Migration Settings', {
  refresh(frm) {
   frm.get_field('instructions').$wrapper.html(`<div class="alert alert-info">
    <strong>Move VMMS data from the old site</strong><br>
    Choose Bulk Export and save the old site's HTTPS URL and dedicated migration credentials. Install VMMS Export on the old site first.
-   Capture → prepare references → review mappings → plan → rehearse → import → reconcile.<br>
+   For people: Capture → prepare references → review mappings → plan → Import first 50 people → review → Continue people continuously. Version history follows the people and file batches.<br>
    Enable Preserve existing passwords and register this target’s login transfer public key on the old site.
    Full Bulk Export includes people, protected logins, deployment/event history and a restricted archive of the original business records. Reports distinguish native conversions from retained history.
    Both sites need hosting support to install apps; the target needs a running background worker.
@@ -26,10 +26,10 @@ frappe.ui.form.on('VMMS Migration Settings', {
    ]}); dialog.show();
   }, __('1. Source'));
   frm.add_custom_button(__('Capture / resume old site'), () => {
-   frappe.confirm(__('This reads records and downloads attachments from the old site. For a final capture, freeze changes on the old site first. Continue?'), () => start('capture'));
+   frappe.confirm(__('This reads records and downloads attachments from the old site. The old site can stay live during the people copy; a later capture adds new people and reports changes to imported people. Continue?'), () => start('capture'));
   }, __('1. Source'));
   frm.add_custom_button(__('Clear capture'), async () => {
-   frappe.confirm(__('Clear the selected capture so you can capture again? Previous private capture files remain on the server. This is blocked after any records are migrated.'), async () => {
+   frappe.confirm(__('Clear the selected capture so you can capture again? Previous private capture files remain on the server. An unfinished session must finish first. Later captures keep the existing people and report source changes.'), async () => {
     await frappe.call({method: migration_api + 'clear_capture'}); frm.reload_doc();
    });
   }, __('1. Source'));
@@ -41,6 +41,30 @@ frappe.ui.form.on('VMMS Migration Settings', {
   add('Generate mappings', 'crosswalks', '2. Review');
   frm.add_custom_button(__('Edit mappings'), () => mapping_dialog(frm), __('2. Review'));
   add('Plan migration', 'plan', '3. Validate');
+  frm.add_custom_button(__('Check people file support'), async () => {
+   const {message: result} = await frappe.call({method: migration_api + 'people_preflight'});
+   frappe.msgprint({title: __('Hosted file-copy capability'), message: '<pre>' + frappe.utils.escape_html(JSON.stringify(result, null, 2)) + '</pre>'});
+  }, __('People import'));
+  frm.add_custom_button(__('Import first 50 people'), () => {
+   frappe.confirm(__('Import the first 50 ready/source people and their available files, then pause for review? This creates live records, pauses the target scheduler and mutes notifications. Existing migrated people are kept; changed source records are reported. Projects and deployment history are separate.'), () => start('people_import', {confirmation: 'IMPORT PEOPLE', batch_size: 50}));
+  }, __('People import'));
+  frm.add_custom_button(__('Import next 50 people'), async () => {
+   await migration_json('onerc_vmms_migrate.batch_browser.resume', {batch_size: 50, auto_continue: false});
+   migration_status(frm);
+  }, __('People import'));
+  frm.add_custom_button(__('Continue people continuously'), () => {
+   const dialog = new frappe.ui.Dialog({title: __('Continue people and their files'), fields: [
+    {fieldtype: 'HTML', options: '<p>Resume the committed checkpoint. People pages and file pages commit separately. After the remaining people and accounts, the worker imports original Version history. Source changes are reported without overwriting existing people. Validation failures stop the sequence for review.</p>'},
+    {fieldname: 'batch_size', fieldtype: 'Int', label: __('Records per job (1–1000)'), default: 50, reqd: 1}
+   ], primary_action_label: __('Continue'), primary_action: async values => {
+    if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
+    await migration_json('onerc_vmms_migrate.batch_browser.resume', {...values, auto_continue: true});
+    dialog.hide(); migration_status(frm);
+   }}); dialog.show();
+  }, __('People import'));
+  frm.add_custom_button(__('Pause people import'), async () => {
+   await migration_json('onerc_vmms_migrate.batch_browser.pause'); migration_status(frm);
+  }, __('People import'));
   add('Rehearse full import', 'rehearsal', '3. Validate');
   frm.add_custom_button(__('Start batch test'), () => {
    const dialog = new frappe.ui.Dialog({title: __('Test migration in resumable batches'), fields: [
@@ -189,7 +213,7 @@ async function migration_status(frm) {
  if (state.error) html += `<div class="alert alert-danger">${escape(state.error)}</div>`;
  if (state.batch) {
   const batch = state.batch;
-  html += `<div class="alert alert-info"><strong>${batch.mode === 'test' ? __('Persistent batch test') : __('Batched import')}</strong><br>${escape(batch.phase)} · ${escape(batch.status)} · ${__('Committed batches')}: ${escape(batch.batch_number)}<br>${__('Completed in this phase')}: ${escape(batch.offset)}${batch.total != null ? ' / ' + escape(batch.total) : ''}<br>${__('Maximum records per job')}: ${escape(batch.batch_size)}</div>`;
+  html += `<div class="alert alert-info"><strong>${batch.mode === 'test' ? __('Persistent batch test') : batch.scope === 'people' ? __('People and Version import') : __('Batched import')}</strong><br>${escape(batch.phase)} · ${escape(batch.status)} · ${__('Committed batches')}: ${escape(batch.batch_number)}<br>${__('Completed in this phase')}: ${escape(batch.offset)}${batch.total != null ? ' / ' + escape(batch.total) : ''}<br>${__('Maximum records per job')}: ${escape(batch.batch_size)}</div>`;
   if (batch.status === 'blocked') html += '<p>Automatic batches stopped. Review the latest batch failure report, fix the cause, then use Resume / retry batches. Earlier committed batches remain intact.</p>';
   if (batch.mode === 'test' && batch.status === 'finished') html += '<p>Batch testing finished. Its records remain on this test site. This result does not authorize a live import.</p>';
  }
@@ -259,7 +283,7 @@ function mapping_dialog(frm) {
    }}
   ], primary_action_label: __('Save mappings'), primary_action: async () => {
    await migration_json(migration_api + 'save_mappings', {kind, rows: dialog.fields_dict.rows.df.data});
-   dialog.hide(); frappe.show_alert({message: __('Mappings saved. Run the plan and rehearsal again.'), indicator: 'green'});
+   dialog.hide(); frappe.show_alert({message: __('Mappings saved. Run the plan again.'), indicator: 'green'});
   }}); dialog.show();
  }}); chooser.show();
 }

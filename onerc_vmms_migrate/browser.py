@@ -23,6 +23,7 @@ ACTIONS = {
 	"plan",
 	"rehearsal",
 	"batch_test",
+	"people_import",
 	"import",
 	"reconcile",
 }
@@ -121,7 +122,7 @@ def status() -> dict:
 				value["reports"].append(
 					{
 						"run": run,
-						"files": sorted(f for f in os.listdir(directory) if f.endswith((".csv", ".json")))[-100:],
+						"files": sorted(f for f in os.listdir(directory) if f.endswith((".csv", ".json"))),
 					}
 				)
 	return value
@@ -147,6 +148,8 @@ def start(
 	settings = frappe.get_single(SETTINGS)
 	if action not in ("capture", "audit_logins") and not settings.browser_capture:
 		frappe.throw("Capture the old site first.")
+	if action=="people_import" and confirmation!="IMPORT PEOPLE":
+		frappe.throw("Confirm IMPORT PEOPLE to start the first committed people batch.")
 	if action == "import":
 		value = state()
 		rehearsal = value.get("rehearsal") or {}
@@ -160,12 +163,14 @@ def start(
 			frappe.throw("Confirm LOAD, the target backup, source freeze, and review of excluded records.")
 	from onerc_vmms_migrate import batches, batch_browser
 	existing_batch = batches.checkpoint()
+	if existing_batch and existing_batch.get("scope")=="people" and existing_batch["status"]=="finished" and action in ("capture","people_import"):
+		existing_batch=None
 	if existing_batch and action not in ("check", "selftest", "profile", "plan", "reconcile"):
 		frappe.throw("A batch session already exists. Use its Pause/Resume controls; trial records cannot be promoted to a live import.")
-	if action == "batch_test" or (action == "import" and batch_size):
+	if action in ("batch_test","people_import") or (action == "import" and batch_size):
 		if action == "batch_test" and (confirmation != "TEST" or not test_destination or not backup_confirmed):
 			frappe.throw("Confirm TEST, a disposable test destination, and a current backup. Test batches retain destination records.")
-		size = batches.validate_size(batch_size or 1000)
+		size = batches.validate_size(batch_size or (50 if action=="people_import" else 1000))
 		batch_browser.assert_job_idle()
 		frappe.cache.delete(batch_browser.pause_key())
 		return batch_browser.queue(action, frappe.session.user, size)
@@ -225,6 +230,10 @@ def _register_capture(capture_id):
 	# Capture has no pending business writes; use a fresh connection to register it.
 	frappe.db.close()
 	frappe.db.connect()
+	from onerc_vmms_migrate.people_run import check_source
+	from onerc_vmms_migrate.batches import DOCTYPE
+	with open(workspace.path("captures",capture_id,"snapshot.json")) as handle:
+		check_source(frappe.db.get_single_value(DOCTYPE,"people_source_id"),json.load(handle))
 	frappe.db.set_single_value(SETTINGS, "browser_capture", capture_id)
 	frappe.db.commit()
 
@@ -260,10 +269,10 @@ def execute(token, action, user):
 		save_state(value)
 		report_progress = _progress_reporter(value)
 		if action == "capture":
-			if frappe.db.count("Legacy Migration Record"):
-				frappe.throw(
-					"This target already has migration records. Keep its capture for reconciliation; use a fresh target for another capture."
-				)
+			from onerc_vmms_migrate.batches import checkpoint
+			batch=checkpoint()
+			if batch and batch["status"]!="finished":
+				frappe.throw("Finish the current batch session before taking a later capture.")
 			settings = frappe.get_single(SETTINGS)
 			capture_id = token
 			if settings.get("capture_mode") == "Bulk Export":
@@ -373,6 +382,7 @@ def finish_cutover(confirmation: str = "") -> None:
 
 	toggle_scheduler(original["scheduler_enabled"])
 	update_site_config("mute_emails", original["mute_emails"])
+	frappe.db.set_single_value(SETTINGS,"people_import_active",0)
 	value.pop("cutover", None)
 	value["services_restored_after_failure"] = confirmation == "RESTORE"
 	save_state(value)
@@ -383,10 +393,9 @@ def clear_capture() -> None:
 	authorize()
 	assert_idle()
 	from onerc_vmms_migrate.batches import checkpoint
-	if checkpoint():
-		frappe.throw("The capture belongs to a batch session. Preserve it for recovery; restore the target backup or use a fresh target for another capture.")
-	if frappe.db.count("Legacy Migration Record"):
-		frappe.throw("A capture cannot be replaced after records have been migrated.")
+	batch=checkpoint()
+	if batch and (batch.get("scope")!="people" or batch["status"]!="finished"):
+		frappe.throw("Finish the current session before selecting a later capture. Previous captures and ledgers are retained.")
 	frappe.db.set_single_value(SETTINGS, "browser_capture", "")
 	value = state()
 	value.pop("rehearsal", None)
@@ -465,3 +474,12 @@ def download_report(run_id: str, filename: str) -> None:
 	with open(path, "rb") as handle:
 		content = handle.read()
 	frappe.local.response.update({"filename": filename, "filecontent": content, "type": "download"})
+
+
+@frappe.whitelist()
+def people_preflight() -> dict:
+	authorize()
+	from onerc_vmms_migrate.file_transfer import assert_supported
+	assert_supported()
+	return {"file_copy_supported":True,"frappe_version":getattr(frappe,"__version__","unknown"),
+		"review_mode":workspace.config().get("import_with_review"),"scope":"People, files, then Version history"}

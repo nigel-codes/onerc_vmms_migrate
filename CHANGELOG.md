@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 — 2026-11-11
+
+- Add a production people workflow with a first-page pause, continuous resume, durable file checkpoints and original Version history after people. No rehearsal or source freeze is required for this workflow.
+- Exclude historical memberships from fee posting by their stored accounting status; isolate notifications, queued approval repair and expiry while the people copy is active.
+- Preserve original review values, emergency contacts on volunteers and applications, motivation through generated CSVs, membership facts and source timestamps. Keep generated applications labelled created by migration.
+- Exclude skills and lower residence data; map HQ to national and resolve unprefixed regions on the destination. Preserve account state, native self-service roles and the County Coordinator role profile.
+- Support later captures from the same source. Report changed people without overwriting them, including changes to email; preserve older ledger fingerprints when enriching captured evidence.
+- Separate external URLs from missing files and recover falsely corrupt blobs only when captured SHA256 and a source File row agree.
+
+
 
 ## 0.6.0 — 2026-11-08
 

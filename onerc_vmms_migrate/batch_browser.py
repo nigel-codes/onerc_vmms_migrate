@@ -86,20 +86,20 @@ def pause():
 
 
 @frappe.whitelist(methods=["POST"])
-def resume(batch_size: int = 1000, accept_changes: bool = False):
+def resume(batch_size: int = 50, accept_changes: bool = False, auto_continue: bool = False):
 	browser.authorize()
 	assert_job_idle()
 	size = batches.validate_size(batch_size)
 	token = reserve_lock()
 	try:
-		return resume_locked(size, accept_changes, token)
+		return resume_locked(size, accept_changes, token, auto_continue=auto_continue)
 	except Exception:
 		if frappe.cache.get(browser.lock_key()) == token.encode():
 			frappe.cache.delete(browser.lock_key())
 		raise
 
 
-def resume_locked(size, accept_changes, token):
+def resume_locked(size, accept_changes, token, auto_continue=False):
 	value = batches.checkpoint()
 	if not value or value["status"] == "finished":
 		frappe.throw("There is no unfinished batch session to resume.")
@@ -117,10 +117,11 @@ def resume_locked(size, accept_changes, token):
 		value["fingerprint"] = current
 		value["passed"] = False
 	value.update(batch_size=size, status="ready", error=None)
+	if value.get("scope")=="people":value["auto_continue"]=bool(auto_continue)
 	batches.commit_checkpoint(value)
 	frappe.cache.delete(pause_key())
 	return queue(
-		"batch_test" if value["mode"] == "test" else "import", frappe.session.user, size, token=token
+		"people_import" if value.get("scope")=="people" else "batch_test" if value["mode"] == "test" else "import", frappe.session.user, size, token=token
 	)
 
 
@@ -149,6 +150,9 @@ def initialize(action, size, conf, source):
 		frappe.throw("Enable protected password preservation first.")
 	if not source.data.get("schemas") or not source.data.get("history"):
 		frappe.throw("A full captured snapshot is required.")
+	if action=="people_import":
+		from onerc_vmms_migrate.file_transfer import assert_supported
+		assert_supported()
 	if action == "batch_test" and frappe.db.count("Legacy Migration Record"):
 		frappe.throw(
 			"Start the batch test on a target without migration ledger records; use Resume for an existing batch session."
@@ -159,9 +163,10 @@ def initialize(action, size, conf, source):
 		and not conf.get("allow_missing_files")
 	):
 		frappe.throw("Review and explicitly approve attachment exceptions before live import.")
-	checks = run.selftest()
-	if not checks.get("passed"):
-		frappe.throw("The application self-test failed. Review its report before starting batches.")
+	if action != "people_import":
+		checks = run.selftest()
+		if not checks.get("passed"):
+			frappe.throw("The application self-test failed. Review its report before starting batches.")
 	from onerc_vmms_migrate.placeholder_emails import prepare
 	prepare(source.data, conf)
 	value = {
@@ -179,6 +184,13 @@ def initialize(action, size, conf, source):
 		"capture_id": conf.get("browser_capture"),
 		"authentication_policy": login_policy.plan(source.data, conf),
 	}
+	if action == "people_import":
+		from onerc_vmms_migrate.people_run import check_source
+		previous=frappe.db.get_single_value(batches.DOCTYPE,"people_source_id")
+		value.update(scope="people",people_offset=0,auto_continue=False,
+			source_id=check_source(previous,source.data))
+		frappe.db.set_single_value(batches.DOCTYPE,"people_source_id",value["source_id"])
+		frappe.db.set_single_value("VMMS Migration Settings","people_import_active",1)
 	batches.commit_checkpoint(value)
 	return value
 
@@ -197,9 +209,13 @@ def execute(token, action, user, size):
 		browser.authorize()
 		conf = workspace.config()
 		value = batches.checkpoint()
+		if action=="people_import" and value and value.get("scope")=="people" and value["status"]=="finished":
+			value=None
 		if value:
 			if value["fingerprint"] != browser.fingerprint():
 				frappe.throw("Inputs changed. Resume only after reviewing the change.")
+			if (value.get("scope")=="people") != (action=="people_import"):
+				frappe.throw("A different migration scope owns this checkpoint. Finish it before starting another.")
 			if value["mode"] != ("test" if action == "batch_test" else "import"):
 				frappe.throw(
 					"A different batch session already exists. Trial records cannot authorize live cutover."
@@ -243,7 +259,7 @@ def execute(token, action, user, size):
 		durable = batches.checkpoint()
 		from onerc_vmms_migrate.source import SourceError
 
-		safe = isinstance(exc, (frappe.ValidationError, frappe.PermissionError, SourceError))
+		safe = isinstance(exc, (ValueError, frappe.ValidationError, frappe.PermissionError, SourceError))
 		message = (
 			frappe.utils.strip_html(str(exc))
 			if safe

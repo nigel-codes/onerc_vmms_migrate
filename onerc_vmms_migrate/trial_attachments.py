@@ -74,7 +74,7 @@ def review_digest(value):
 
 
 @large_transaction
-def save_plan(value, plan):
+def save_plan(value, plan, commit_state=True):
 	"""Immutable tasks are written once; each copy commit stores only its cursor."""
 	columns = [
 		"name",
@@ -111,7 +111,7 @@ def save_plan(value, plan):
 			pending = []
 	if pending:
 		frappe.db.bulk_insert(TASKS, columns, pending)
-	commit(value)
+	if commit_state:commit(value)
 
 
 def read_tasks(value):
@@ -378,6 +378,11 @@ def copy_task(task, source, run_id):
 	native_path = frappe.get_doc("File", receipt.name).get_full_path()
 	if not os.path.isfile(native_path) or sha256_file(native_path) != task["sha256"]:
 		raise ValueError("Copied attachment checksum verification failed.")
+	# Private download permission includes File.owner. The import operator must
+	# not become the sole owner of every volunteer's avatar and evidence.
+	person=next((node["name"] for node in task["owner_chain"] if node["doctype"]=="User"),None)
+	if person:
+		frappe.db.set_value("File",receipt.name,"owner",person,update_modified=False)
 	for link in task["bindings"]:
 		apply_binding(link, url)
 	for name in task["file_records"]:

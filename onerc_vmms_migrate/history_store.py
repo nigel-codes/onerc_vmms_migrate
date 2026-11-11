@@ -57,6 +57,21 @@ class SQLiteHistory(Mapping):
             for row in db.execute("SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' WHERE i.doctype=? ORDER BY i.name",(doctype,)):
                 yield json.loads(row[0])['record']
 
+    def get_record(self,doctype,name):
+        from contextlib import closing
+        with closing(self.connect()) as db:
+            row=db.execute("SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' WHERE i.doctype=? AND i.name=?",(doctype,name)).fetchone()
+        return json.loads(row[0])['record'] if row else None
+
+    def versions_page(self,after,size,types):
+        from contextlib import closing
+        slots=','.join('?' for _ in types)
+        with closing(self.connect()) as db:
+            return [json.loads(row[0])['record'] for row in db.execute(
+                "SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' "
+                "WHERE i.doctype='Version' AND i.name>? AND json_extract(r.payload,'$.record.ref_doctype') IN ("+slots+") "
+                "ORDER BY i.name LIMIT ?",(after,*types,int(size)))]
+
     def children(self,doctype,name,field):
         with self.connect() as db:
             return [json.loads(row[0])['record'] for row in db.execute("SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' WHERE i.parenttype=? AND i.parent=? AND i.parentfield=? ORDER BY i.idx,i.name",(doctype,name,field))]

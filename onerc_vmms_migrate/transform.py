@@ -34,7 +34,7 @@ from onerc_vmms_migrate.crosswalk import DROP, UNMAPPED, Crosswalks
 from onerc_vmms_migrate.emergency_contacts import UNKNOWN_RELATIONSHIP
 
 # Deepest first. The first one the crosswalk maps is where the person lives.
-RESIDENCE_FIELDS = ("sub_location", "administrative_location", "ward", "sub_county", "county")
+RESIDENCE_FIELDS = ("sub_county", "county")
 
 MARITAL = {"Single", "Married", "Divorced", "Widowed", "Other"}
 CITIZENSHIP = {"Citizen", "Non-citizen", "Refugee", "Migrant", "Other"}
@@ -67,7 +67,7 @@ def build(snapshot: dict, crosswalks: Crosswalks, conf: dict, today: datetime.da
 
 	return {
 		"bundles": bundles,
-		"not_migrated": unplaced + _not_migrated(snapshot, people),
+		"not_migrated": unplaced + _not_migrated(snapshot, people) + deferred_values(snapshot),
 	}
 
 
@@ -189,11 +189,32 @@ def _not_migrated(snapshot: dict, people: dict) -> list:
 	return skipped
 
 
+def deferred_values(snapshot):
+	from onerc_vmms_migrate.history_model import canonical
+	out=[]
+	for group,dt in (("users","User"),("employees","Employee"),("applicants","Job Applicant")):
+		for row in snapshot[group].values():
+			for field in ("ward","administrative_location","sub_location","skill","additional_skills",
+				"bank_name","cover_image","screening_responses","eligibility","score",
+				"twitter","headline","location","open_to","preferred_name","current_address","designation","salutation"):
+				if row.get(field) not in (None,"",[]):
+					out.append({"source_doctype":dt,"source_name":row["name"],"field":field,
+						"original_value":canonical(row[field]),"reason":"Retained in source archive; excluded from this people release"})
+	for dt in ("Volunteer Awards Nominations", "Volunteer Award Nomination"):
+		count=snapshot.get("schemas",{}).get(dt,{}).get("count",0)
+		if count:out.append({"source_doctype":dt,"source_name":"*","field":"*","count":count,"reason":"Awards deferred; retained in source capture"})
+	return out
+
+
 def _skip(doctype: str, name: str, reason: str) -> dict:
 	return {"source_doctype": doctype, "source_name": name, "reason": reason}
 
 
 # --- one person -----------------------------------------------------------------
+
+
+def raw_text(value):
+	return "" if value is None else str(value)
 
 
 def _first(*values):
@@ -229,6 +250,7 @@ def _bundle(email, person, snapshot, cw: Crosswalks, conf, today) -> dict:
 		"member": None,
 		"memberships": [],
 		"files": [],
+		"_import_with_review": conf.get("import_with_review"),
 	}
 
 	if len(employees) > 1:
@@ -263,7 +285,9 @@ def _bundle(email, person, snapshot, cw: Crosswalks, conf, today) -> dict:
 	if not b["volunteer"] and not b["member"] and not person["applicants"] and not employees:
 		b["errors"].append("nothing to migrate: no volunteer or member record")
 
+	finalise(b)
 	b["source_hash"] = _hash(user, employees, person["applicants"], person["members"], snapshot)
+	b["source_evidence_hash"] = _hash(user, employees, person["applicants"], person["members"], snapshot, extended=True)
 	return b
 
 
@@ -274,11 +298,15 @@ def _mapped(b, cw: Crosswalks, kind: str, value, required: bool = False):
 		b["errors"].append(f"missing required {kind} value")
 		return None
 	if target is UNMAPPED:
-		b["errors"].append(f"unmapped {kind}: {normalise.text(value)!r} (fill in crosswalks/{kind}.csv)")
+		if b.get("_import_with_review") and not required:
+			from onerc_vmms_migrate.import_review import record
+			record(b, kind, value, "Unmapped vocabulary; review crosswalks/"+kind+".csv")
+		else:
+			b["errors"].append(f"unmapped {kind}: {raw_text(value)!r} (fill in crosswalks/{kind}.csv)")
 		return None
 	if target == DROP:
 		if required:
-			b["errors"].append(f"{kind} {normalise.text(value)!r} is marked '-' (not migrated)")
+			b["errors"].append(f"{kind} {raw_text(value)!r} is marked '-' (not migrated)")
 		return None
 	return target
 
@@ -286,40 +314,18 @@ def _mapped(b, cw: Crosswalks, kind: str, value, required: bool = False):
 def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, today) -> dict:
 	u, e, a = user or {}, employee or {}, applicant or {}
 
-	names = (
-		normalise.names(u.get("first_name"), u.get("middle_name"), u.get("last_name"))
-		or normalise.names(e.get("first_name"), e.get("middle_name"), e.get("last_name"))
-		or normalise.names(a.get("first_name"), a.get("other_names"), a.get("surname"))
-		or normalise.names(a.get("applicant_name"), None, None)
-		or normalise.names(e.get("employee_name"), None, None)
-		or next(
-			(
-				normalise.names(m.get("member_name"), None, None)
-				for m in person["members"]
-				if m.get("member_name")
-			),
-			None,
-		)
-	)
-
-	if not names:
-		if conf.get("import_with_review"):
-			from onerc_vmms_migrate.import_review import record
-			names = next((tuple(normalise.text(r.get(f)) for f in fields) for r, fields in (
-				(u, ("first_name", "middle_name", "last_name")),
-				(e, ("first_name", "middle_name", "last_name")),
-				(a, ("first_name", "other_names", "surname")))
-				if any(normalise.text(r.get(f)) for f in fields)), None)
-			if not names:
-				full = _first(a.get("applicant_name"), e.get("employee_name"),
-					*(m.get("member_name") for m in person["members"]))
-				names = (normalise.text(full), "", "")
-			for field, value in zip(("first_name", "middle_name", "last_name"), names):
-				if field != "middle_name" and not value:
-					record(b, field, value, "name was not recorded", "kept blank")
-		else:
-			b["errors"].append("no first and last name anywhere (core requires both)")
-			names = ("", "", "")
+	from onerc_vmms_migrate.import_review import record
+	records=((u,("first_name","middle_name","last_name")),(e,("first_name","middle_name","last_name")),(a,("first_name","other_names","surname")))
+	names=next((tuple(r.get(f) or "" for f in fields) for r,fields in records if r.get(fields[0]) and r.get(fields[2])),None)
+	if names is None:
+		names=next((tuple(r.get(f) or "" for f in fields) for r,fields in records if any(r.get(f) for f in fields)),("","",""))
+	for field,value in zip(("first_name","middle_name","last_name"),names):
+		if field != "middle_name" and not value:
+			if conf.get("import_with_review"):record(b,field,value,"name was not recorded","kept blank")
+			else:b["errors"].append("no first and last name anywhere (core requires both)")
+	if not any(names):
+		full=_first(a.get("applicant_name"),e.get("employee_name"),*(m.get("member_name") for m in person["members"]))
+		if full:record(b,"full_name",full,"Only a combined name was recorded; no structured names invented","retained for review")
 
 	profile = {
 		"email": email,
@@ -336,27 +342,31 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 	if gender:
 		profile["gender"] = _mapped(b, cw, "gender", gender)
 
-	raw_dob = _first(
-		u.get("birth_date"), u.get("date_of_birth"), e.get("date_of_birth"), a.get("date_of_birth")
-	)
-	dob = normalise.plausible_birth_date(raw_dob, today)
-	if raw_dob and not dob:
-		b["warnings"].append(f"implausible date of birth {raw_dob!r} not carried")
-	profile["date_of_birth"] = dob
+	for raw in (u.get("mobile_no"),e.get("cell_number"),a.get("phone_number"),u.get("phone")):
+		if raw and (raw != profile["phone"] or raw != raw_phone):
+			record(b,"phone",raw,"Original contact form or additional source phone","original retained alongside selected phone")
+	profile["date_of_birth"]=None
+	for origin,raw in (("Employee",e.get("date_of_birth")),("User",u.get("birth_date") or u.get("date_of_birth")),("Job Applicant",a.get("date_of_birth"))):
+		if not raw:continue
+		dob=normalise.plausible_birth_date(raw,today)
+		if not dob:record(b,origin+".date_of_birth",raw,"implausible date of birth")
+		elif not profile["date_of_birth"]:profile["date_of_birth"]=dob
+	for origin,raw in (("Employee",e.get("marital_status")),("User",u.get("marital_status")),("Job Applicant",a.get("marital_status"))):
+		if not raw:continue
+		if raw in MARITAL:
+			profile.setdefault("marital_status",raw)
+		else:
+			target=cw.lookup("marital_status",raw)
+			if target and target not in (UNMAPPED,DROP):profile.setdefault("marital_status",target)
+			else:record(b,origin+".marital_status",raw,"Unsupported marital status; review marital_status crosswalk")
 
-	marital = normalise.text(
-		_first(u.get("marital_status"), e.get("marital_status"), a.get("marital_status"))
-	)
-	if profile_mapping.choice(marital, MARITAL):
-		profile["marital_status"] = profile_mapping.choice(marital, MARITAL)
-	elif marital:
-		b["warnings"].append(f"marital status {marital!r} is not one core knows; not carried")
+	citizenship=_first(u.get("citizenship"),a.get("citizenship"))
+	if citizenship:
+		if citizenship in CITIZENSHIP:profile["citizenship_status"]=citizenship
+		else:
+			target=_mapped(b,cw,"citizenship",citizenship)
+			if target:profile["citizenship_status"]=target
 
-	citizenship = normalise.text(_first(u.get("citizenship"), a.get("citizenship")))
-	if profile_mapping.choice(citizenship, CITIZENSHIP):
-		profile["citizenship_status"] = profile_mapping.choice(citizenship, CITIZENSHIP)
-	elif citizenship:
-		b["warnings"].append(f"citizenship {citizenship!r} has no supported mapping; original retained")
 	profile["country_of_citizenship"] = _first(
 		u.get("country_of_citizenship"), a.get("country_of_citizenship")
 	)
@@ -368,7 +378,7 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 		value = _first(u.get(field), a.get(field))
 		if not value:
 			continue
-		node = cw.lookup("residence", f"{field}:{normalise.text(value)}")
+		node = cw.lookup("residence", f"{field}:{raw_text(value)}")
 		if node is UNMAPPED:
 			b["warnings"].append(f"Unmapped {field} retained in source archive; using a recorded parent where available")
 			continue
@@ -379,29 +389,28 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 			profile["home_geo_node"] = node
 			break
 
-	profile_mapping.personal_details(b, profile, u, e, a, conf)
+	profile_mapping.personal_details(b, profile, u, e, a, conf, cw=cw)
 	profile["identifications"] = _identifications(b, u, a, cw)
 	if b.get("untyped_id_number"):
 		profile["legacy_untyped_id_number"] = b["untyped_id_number"]
 	child_mapping.details(b, profile, u, a)
 
-	rows, _ = _first_table("disabilities", u, a)
-	# A row saying "None" is somebody answering no, not a disability.
-	disabilities = [
-		r
-		for r in rows
-		if not cw.is_placeholder("disability", r.get("disability") or r.get("disability_name"))
-	]
-	chosen = []
-	for row in disabilities:
-		target = _mapped(b, cw, "disability", row.get("disability") or row.get("disability_name"))
-		if target and target not in chosen:
-			chosen.append(target)
-	if disabilities:
-		# They told us they have one, even if the kind is not carried. No rows is
-		# not "No": nobody was asked the question the new product asks.
-		profile["vmms_disability_status"] = "Yes"
-		profile["vmms_disabilities"] = [{"disability": d} for d in chosen]
+	rows,_=_first_table("disabilities",u,a)
+	chosen=[]
+	for row in rows:
+		raw=row.get("disability") or row.get("disability_name")
+		if not raw:continue
+		status=_mapped(b,cw,"disability_status",raw)
+		if status and (status=="Yes" or not profile.get("vmms_disability_status")):
+			profile["vmms_disability_status"]=status
+		if status=="No":continue
+		target=_mapped(b,cw,"disability",raw)
+		if target:
+			item={"disability":target}
+			description=row.get("other_disability") or row.get("description") or row.get("disability_name")
+			if description:item["disability_name"]=description
+			if item not in chosen:chosen.append(item)
+	if chosen:profile["vmms_disabilities"]=chosen
 
 	profession = _first(a.get("profession"), u.get("profession"), e.get("custom_profession"))
 	if profession:
@@ -409,23 +418,27 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 		if target:
 			profile["vmms_profession"] = target
 			if target.casefold() == "other":
-				profile["vmms_other_profession"] = normalise.text(profession)
+				profile["vmms_other_profession"] = raw_text(profession)
 
 	profile["vmms_education"] = _education(b, u, e, a, cw)
 	profile["vmms_work_experience"] = _work_experience(u, e, a)
 	profile["vmms_references"] = [
 		{
-			"reference_name": normalise.text(r.get("reference_name")),
-			"position": normalise.text(r.get("position")),
-			"organization": normalise.text(r.get("organization")),
+			"reference_name": raw_text(r.get("reference_name")),
+			"position": raw_text(r.get("position")),
+			"organization": raw_text(r.get("organization")),
 			"email": normalise.email(r.get("email")),
 			"legacy_email": str(r.get("email")) if r.get("email") and not normalise.email(r.get("email")) else None,
 			"phone": normalise.phone(r.get("phone_number"), conf.get("default_country_code")),
 			"notes": r.get("notes"),
 		}
 		for r in _first_table("work_references", u, a)[0]
-		if normalise.text(r.get("reference_name"))
+		if raw_text(r.get("reference_name"))
 	]
+	for index,raw in enumerate(_first_table("work_references",u,a)[0],1):
+		phone=raw.get("phone_number")
+		if phone and phone != normalise.phone(phone,conf.get("default_country_code")):
+			record(b,f"vmms_references[{index}].phone",phone,"Original phone form retained","original retained alongside reference")
 	profile["vmms_training"] = _training(b, u, a)
 	profile["vmms_licences"] = _licences(b, u, a, cw)
 	profile["vmms_driving_licences"] = _driving(b, u, a, cw)
@@ -440,7 +453,7 @@ def _profile(b, email, user, employee, applicant, person, snapshot, cw, conf, to
 def _identifications(b, u, a, cw) -> list[dict]:
 	rows = []
 	id_type = _first(u.get("identification_type"), a.get("identification_type"))
-	id_number = normalise.text(_first(u.get("id_number"), a.get("id_number")))
+	id_number = raw_text(_first(u.get("id_number"), a.get("id_number")))
 	if cw.is_placeholder("id_number", id_number):
 		id_number = ""
 
@@ -453,7 +466,7 @@ def _identifications(b, u, a, cw) -> list[dict]:
 			if target:
 				rows.append({"id_type": target, "id_number": id_number, "is_primary": 1})
 
-	passport = normalise.text(_first(u.get("passport_number"), a.get("passport_number")))
+	passport = raw_text(_first(u.get("passport_number"), a.get("passport_number")))
 	if cw.is_placeholder("passport_number", passport):
 		passport = ""
 	if passport:
@@ -469,23 +482,28 @@ def _education(b, u, e, a, cw) -> list[dict]:
 	# Education Detail. Decode each row by its actual fields, not its parent.
 	out = []
 	for r in child_mapping.selected_rows(b, "education", u, e, a):
-		institution = normalise.text(_first(r.get("school_univ"), r.get("institution_name")))
+		institution = raw_text(_first(r.get("school_univ"), r.get("institution_name")))
 		if not institution:
-			b["errors"].append("education row has no institution; original retained")
-			continue
+			if b.get("_import_with_review"):
+				from onerc_vmms_migrate.import_review import record
+				record(b,"vmms_education.institution",r,"Institution was not recorded; qualification row retained")
+			else:
+				b["errors"].append("education row has no institution; original retained")
+				continue
 		hrms = "school_univ" in r or "year_of_passing" in r
 		raw_level = r.get("level") if hrms else r.get("degree_type")
 		row = {
 			"institution": institution,
 			"level": _mapped(b, cw, "education_level", raw_level) if raw_level else None,
-			"qualification": normalise.text(r.get("qualification")) if hrms else normalise.text(" ".join(filter(None, [r.get("degree_type"), r.get("major")]))),
+			"qualification": raw_text(_first(r.get("qualification"),r.get("degree_type"))),
 			"finished_in": normalise.year(r.get("year_of_passing") if hrms else r.get("end_date")),
 		}
 		if not hrms:
 			row["started_in"] = normalise.year(r.get("start_date"))
+			if r.get("major"):row["maj_opt_subj"]=r["major"]
 		for field in ("class_per", "maj_opt_subj"):
 			if r.get(field) not in (None, ""):
-				row[field] = normalise.text(r[field])
+				row[field] = raw_text(r[field])
 		if r.get("attachment"):
 			b["files"].append({"url": r["attachment"], "purpose": "table", "table": "vmms_education", "index": len(out)})
 		out.append(_education_limits(b, row))
@@ -497,8 +515,9 @@ def _education_limits(bundle,row):
 		value=row.get(field)
 		if isinstance(value,str) and len(value)>140:
 			row["legacy_"+field]=value
-			row[field]=value[:105]+"… [see original text]"
-			bundle["warnings"].append("Long education text preserved in a legacy detail field; the display uses an explicit excerpt")
+			row[field]=None
+			from onerc_vmms_migrate.import_review import record
+			record(bundle,"education."+field,value,"Text exceeds native length; complete original retained in legacy_"+field)
 	return row
 
 
@@ -506,38 +525,38 @@ def _work_experience(u, e, a) -> list[dict]:
 	rows, _ = _first_table("work_experience", u, a)
 	out = [
 		{
-			"organization": normalise.text(r.get("company")),
-			"role": normalise.text(r.get("title")),
+			"organization": raw_text(r.get("company")),
+			"role": raw_text(r.get("title")),
 			"started_on": normalise.date(r.get("from_date")),
 			"ended_on": normalise.date(r.get("to_date")),
 			"is_current": 1 if r.get("current") else 0,
 			"summary": r.get("description"),
-			"location": normalise.text(r.get("location")),
+			"location": raw_text(r.get("location")),
 		}
 		for r in rows
-		if normalise.text(r.get("company"))
+		if raw_text(r.get("company"))
 	]
 	for r in u.get("internship") or []:
-		if normalise.text(r.get("company")):
+		if raw_text(r.get("company")):
 			out.append(
 				{
-					"organization": normalise.text(r.get("company")),
-					"role": normalise.text(r.get("title")) or "Volunteering / internship",
+					"organization": raw_text(r.get("company")),
+					"role": raw_text(r.get("title")),
 					"started_on": normalise.date(r.get("from_date")),
 					"ended_on": normalise.date(r.get("to_date")),
 					"is_current": 1 if r.get("current") else 0,
 					"summary": r.get("description"),
-					"location": normalise.text(r.get("location")),
+					"location": raw_text(r.get("location")),
 				}
 			)
 	if not out:
 		out = [
 			{
-				"organization": normalise.text(r.get("company_name")),
-				"role": normalise.text(r.get("designation")),
+				"organization": raw_text(r.get("company_name")),
+				"role": raw_text(r.get("designation")),
 			}
 			for r in e.get("external_work_history") or []
-			if normalise.text(r.get("company_name"))
+			if raw_text(r.get("company_name"))
 		]
 	return out
 
@@ -546,7 +565,7 @@ def _training(b, u, a) -> list[dict]:
 	out = []
 	courses, _ = _first_table("courses", u, a)
 	for r in courses:
-		if not normalise.text(r.get("course_name")):
+		if not raw_text(r.get("course_name")):
 			continue
 		if r.get("attachment"):
 			b["files"].append(
@@ -554,8 +573,8 @@ def _training(b, u, a) -> list[dict]:
 			)
 		out.append(
 			{
-				"course_name": normalise.text(r.get("course_name")),
-				"institution": normalise.text(r.get("institution")),
+				"course_name": raw_text(r.get("course_name")),
+				"institution": raw_text(r.get("institution")),
 				"started_on": normalise.date(r.get("start_date")),
 				"completed_on": normalise.date(r.get("date_completed")),
 				"remarks": r.get("remarks"),
@@ -573,8 +592,8 @@ def _licences(b, u, a, cw) -> list[dict]:
 		if not licence_type:
 			continue
 		if not (
-			normalise.text(r.get("institution"))
-			and normalise.text(r.get("qualification"))
+			raw_text(r.get("institution"))
+			and raw_text(r.get("qualification"))
 			and r.get("valid_from")
 		):
 			b["warnings"].append(f"licence {r.get('license_type')!r} is missing a required part; not carried")
@@ -586,10 +605,10 @@ def _licences(b, u, a, cw) -> list[dict]:
 		out.append(
 			{
 				"license_type": licence_type,
-				"institution": normalise.text(r.get("institution")),
-				"qualification": normalise.text(r.get("qualification")),
-				"registration_no": normalise.text(r.get("registration_no")),
-				"license_name": normalise.text(r.get("license_name")),
+				"institution": raw_text(r.get("institution")),
+				"qualification": raw_text(r.get("qualification")),
+				"registration_no": raw_text(r.get("registration_no")),
+				"license_name": raw_text(r.get("license_name")),
 				"description": r.get("description"),
 				"valid_from": normalise.date(r.get("valid_from")),
 				"valid_to": normalise.date(r.get("valid_to")),
@@ -626,7 +645,7 @@ def _login(b, email, user, snapshot) -> dict | None:
 	unusual = [r for r in roles if r not in PLAIN_ROLES]
 	if unusual:
 		b["warnings"].append(
-			"old login held roles beyond a volunteer's: " + ", ".join(unusual) + ". Grant these deliberately"
+			"old login held roles beyond a volunteer's: " + ", ".join(unusual) + ". Retained under the approved role policy"
 		)
 	return {
 		"email": email,
@@ -645,6 +664,8 @@ def _login(b, email, user, snapshot) -> dict | None:
 			if r.get("provider") and r.get("userid")
 		],
 		"old_roles": roles,
+		"user_type": user.get("user_type"),
+		"role_profile_name": user.get("role_profile_name"),
 		"last_login": user.get("last_login"),
 	}
 
@@ -663,15 +684,6 @@ def _volunteer(b, employee, applicant, user, cw, conf, today) -> None:
 	status = _mapped(b, cw, "volunteer_status", employee.get("status") or "Active", required=True)
 
 	skills = []
-	for row in u.get("skill") or []:
-		target = _mapped(b, cw, "skill", row.get("skill_name") or row.get("skill"))
-		if target and target not in skills:
-			skills.append(target)
-	additional, _ = _first_table("additional_skills", u, a)
-	for row in additional:
-		target = _mapped(b, cw, "skill", row.get("additional_skill"))
-		if target and target not in skills:
-			skills.append(target)
 
 	languages = []
 	language_rows, _ = _first_table("languages", u, a)
@@ -699,6 +711,8 @@ def _volunteer(b, employee, applicant, user, cw, conf, today) -> None:
 	b["application"] = {
 		"source_name": a["name"] if a.get("name") and a.get("status") == "Accepted" else employee["name"],
 		"source_doctype": "Job Applicant" if a.get("name") and a.get("status") == "Accepted" else "Employee",
+		"created_by_migration": not (a.get("name") and a.get("status") == "Accepted"),
+		"motivation": [{"motivation":target}] if a.get("reason_to_join_krcs") and (target := _mapped(b,cw,"motivation",a["reason_to_join_krcs"])) else [],
 		"applied_on": normalise.date(a.get("creation"))
 		or joined_on
 		or normalise.date(employee.get("creation")),
@@ -712,26 +726,17 @@ def _volunteer(b, employee, applicant, user, cw, conf, today) -> None:
 
 def _contacts_and_answers(b, employee, u, a, cw, conf) -> tuple[list, list]:
 	contacts = []
-	contact_name = normalise.text(employee.get("person_to_be_contacted"))
-	contact_phone = normalise.phone(employee.get("emergency_phone_number"), conf.get("default_country_code"))
-	if contact_name and contact_phone:
-		relationship = normalise.text(employee.get("relation"))
-		if not relationship:
-			b["warnings"].append("Emergency contact relationship was not recorded; contact retained under an explicit legacy value for correction")
-		contacts.append(
-			{
-				"contact_name": contact_name,
-				"relationship": relationship or UNKNOWN_RELATIONSHIP,
-				"primary_phone": contact_phone,
-				"may_contact_in_emergency": 1 if conf.get("emergency_contact_may_call") else 0,
-			}
-		)
-	elif contact_name or contact_phone:
-		b["warnings"].append("emergency contact is missing a name or a phone; not carried")
-	else:
-		b["warnings"].append(
-			"no emergency contact on record (the new site requires one for future approvals)"
-		)
+	from onerc_vmms_migrate.import_review import record
+	contact_name=employee.get("person_to_be_contacted")
+	raw_phone=employee.get("emergency_phone_number")
+	contact_phone=normalise.phone(raw_phone,conf.get("default_country_code"))
+	if contact_name or raw_phone:
+		relationship=employee.get("relation")
+		contacts.append({"contact_name":contact_name,"relationship":relationship,
+			"primary_phone":contact_phone,"may_contact_in_emergency":int(bool(conf.get("emergency_contact_may_call")))})
+		if raw_phone != contact_phone:record(b,"emergency_contacts.primary_phone",raw_phone,"Original phone form retained","original retained alongside contact")
+		for field,value in (("contact_name",contact_name),("relationship",relationship),("primary_phone",contact_phone)):
+			if not value:record(b,"emergency_contacts."+field,value,"Contact field was not recorded","contact retained with blank field")
 
 	# Person facts use native profile fields. Motivation remains in original
 	# application history; insurance and legacy consent are excluded.
@@ -797,6 +802,7 @@ def _member(b, members, snapshot, cw, conf, today) -> None:
 				"membership_status": new_status,
 				"approval_state": approval_state,
 				"legacy_status": status,
+				**{f:membership.get(f) for f in ("creation","modified","paid","qr_code","is_existing_member")},
 				"valid_from": valid_from,
 				"valid_to": valid_to,
 				"paid_on": invoice.get("posting_date") if paid else None,
@@ -806,7 +812,8 @@ def _member(b, members, snapshot, cw, conf, today) -> None:
 
 	# A member is a person even when no historical membership is Active/Expired.
 	# Preserve their identity without inventing payment, approval or joining dates.
-	b["member"] = {"source_names": sorted(names), "joined_on": min(joined) if joined else None}
+	b["member"] = {"source_names": sorted(names), "joined_on": min(joined) if joined else None,
+		**{f:members[0].get(f) for f in ("creation","modified","customer_name") if members[0].get(f) is not None}}
 	if len(members) == 1 and members[0].get("customer"):
 		b["member"]["customer"] = members[0]["customer"]
 
@@ -855,7 +862,15 @@ def _flag_shared_identifiers(bundles: list[dict]) -> None:
 				by_key[k]["warnings"].append(f"phone {phone} is shared with " + ", ".join(sorted(keys - {k})))
 
 
-def _hash(user, employees, applicants, members, snapshot) -> str:
+def _hash(user, employees, applicants, members, snapshot, extended=False) -> str:
+	if not extended and snapshot.get("_people_original"):
+		original=snapshot["_people_original"]
+		def originals(group,rows):return [original[group].get(row["name"],row) for row in rows]
+		user=original["users"].get((user or {}).get("name"),user)
+		employees=originals("employees",employees)
+		applicants=originals("applicants",applicants)
+		members=originals("members",members)
+		snapshot={**snapshot,"memberships":original["memberships"]}
 	names = {m["name"] for m in members}
 	# Signing in is not a change to the person.
 	user = {k: v for k, v in (user or {}).items() if k != "last_login"}

@@ -10,7 +10,7 @@ from onerc_vmms_migrate import load
 
 class TestPhoneReview(TestCase):
 	def review(self, function, data, enabled=True):
-		ctx = {"conf": {"drop_invalid_phones": enabled}, "warnings": []}
+		ctx = {"bundle":{"warnings":[]}, "conf": {"drop_invalid_phones": enabled}, "warnings": []}
 
 		def validate(value, **kwargs):
 			if len(value) > 20:
@@ -32,14 +32,16 @@ class TestPhoneReview(TestCase):
 		self.assertIn("vmms_references[1].phone", ctx["warnings"][0])
 		self.assertIn("+2542049963400719047340", ctx["warnings"][0])
 
-	def test_invalid_required_contact_phone_omits_only_that_contact(self):
+	def test_invalid_required_contact_phone_keeps_contact_and_reports_only_phone(self):
 		rows = [
 			{"contact_name": "Invalid", "primary_phone": "+2542049963400719047340"},
 			{"contact_name": "Valid", "primary_phone": "+254712345678"},
 		]
 		ctx, result = self.review(load._review_emergency_contacts, rows)
-		self.assertEqual([row["contact_name"] for row in result], ["Valid"])
-		self.assertIn("contact omitted", ctx["warnings"][0])
+		self.assertEqual([row["contact_name"] for row in result], ["Invalid", "Valid"])
+		self.assertIsNone(result[0]["primary_phone"])
+		self.assertIn("phone left blank", ctx["warnings"][0])
+		self.assertIn("original_value",ctx["bundle"]["_review_values"][0])
 		self.assertEqual(rows[0]["primary_phone"], "+2542049963400719047340")
 
 	def test_invalid_optional_contact_phone_preserves_contact(self):

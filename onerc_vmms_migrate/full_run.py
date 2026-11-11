@@ -84,6 +84,8 @@ def execute(confirm=None, limit=None, progress=None):
             account_total=account_result['loaded']+account_result['existing']
             result['failed']+=account_result['total']-account_total-len(excluded_accounts)
             if progress:progress({'phase':'people'})
+            from onerc_vmms_migrate.naming_continuity import reserve_people
+            result['people_naming'] = reserve_people(snapshot, dry_run=dry_run)
             crosswalks=Crosswalks.read()
             from onerc_vmms_migrate.placeholder_emails import prepare
             from onerc_vmms_migrate.identity_review import rows as identity_rows
@@ -190,6 +192,8 @@ def coverage(snapshot):
 
 def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
     """Restore bytes and rewrite native attachment fields, preserving ownership."""
+    if not callable(getattr(source,'verify_file',None)) or not callable(getattr(source,'file_name',None)):
+        raise ValueError('The file phase requires a verified Bulk Export capture; direct database file sources are not supported.')
     from onerc_vmms_migrate.bulk_source import sha256_file
     from onerc_vmms_migrate.history_model import History
     source_id=str(snapshot['source'].get('source_id') or snapshot['source']['db_name'])

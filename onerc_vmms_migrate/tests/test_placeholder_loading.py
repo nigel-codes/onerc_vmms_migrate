@@ -27,6 +27,7 @@ class TestPlaceholderLoading(TestCase):
             return ctx["bundle"]["user"]["email"]
         database = MagicMock()
         database.exists.return_value = False
+        database.get_value.return_value = None
         with patch.object(frappe, "db", database), patch.object(frappe, "get_doc", return_value=MagicMock()), \
                 patch.object(load, "_user", side_effect=insert), patch.object(historical, "mark"), \
                 patch.object(accounts.workspace, "path", return_value="unused"), patch.object(accounts.workspace, "write_json"):

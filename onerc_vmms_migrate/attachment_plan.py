@@ -21,7 +21,6 @@ PERSONAL_SOURCE = frozenset(
 		"VM Membership",
 		"Event Booking",
 		"Event Ticket",
-		"Personnel Deployment Request",
 	}
 )
 
@@ -68,7 +67,7 @@ class Plan:
 			task["file_records"].append(file_record)
 
 	def finish(self):
-		tasks, held = [], list(self.issues)
+		tasks, held, links = [], list(self.issues), []
 		slots = defaultdict(set)
 		for task in self.tasks.values():
 			for link in task["bindings"]:
@@ -77,6 +76,10 @@ class Plan:
 		for key in sorted(self.tasks):
 			task = self.tasks[key]
 			item = self.manifest.get(task["url"], {})
+			from onerc_vmms_migrate.file_recovery import external
+			if external(task["url"]):
+				links.append({**task,"reason":"External web link; no source attachment bytes expected"})
+				continue
 			reason = None
 			if item.get("status") != "ready" or not re.fullmatch("[0-9a-f]{64}", item.get("sha256") or ""):
 				reason = "Verified captured bytes unavailable"
@@ -97,9 +100,11 @@ class Plan:
 		return {
 			"tasks": tasks,
 			"held": held,
+			"external": links,
 			"summary": {
 				"copy_tasks": len(tasks),
 				"held_items": len(held),
+				"external_links": len(links),
 				"unique_ready_urls": len({task["url"] for task in tasks}),
 				"by_target": dict(Counter(task["doctype"] for task in tasks)),
 				"all_new_files_private": True,
@@ -155,7 +160,7 @@ def profile_binding(bundle, item, profile):
 	)
 
 
-def build(snapshot, conf):
+def build(snapshot, conf, only_people=None):
 	"""Build a read-only plan from qualified native identities and captured bytes."""
 	history = History(snapshot)
 	plan = Plan(snapshot.get("all_file_manifest", snapshot.get("captured_file_manifest", {})))
@@ -190,27 +195,37 @@ def build(snapshot, conf):
 	ledgers = frappe.get_all(
 		load.LEDGER,
 		filters={"source_doctype": "Person", "target_doctype": "Red Profile"},
-		fields=["person_key", "source_hash", "target_name"],
+		fields=["person_key", "source_hash", "source_evidence_hash", "target_name"],
 	)
 	profiles = {}
+	evidence = {}
+	changed_roots=set()
 	for row in ledgers:
 		if row.person_key in profiles and profiles[row.person_key] != (row.target_name, row.source_hash):
 			raise ValueError("Person ledger has conflicting profile targets")
 		profiles[row.person_key] = (row.target_name, row.source_hash)
+		evidence[row.person_key]=row.get("source_evidence_hash")
 	profile_roots = {"person:" + key: value[0] for key, value in profiles.items()}
+	selected_keys=set(only_people) if only_people is not None else None
 	for bundle in people:
 		root = None if bundle["errors"] or bundle.get("volunteer_excluded") else "person:" + bundle["key"]
 		for dt, name in bundle["sources"]:
 			roots[(dt, str(name))] = root
+		if selected_keys is not None and bundle["key"] not in selected_keys:
+			continue
 		if not bundle["files"]:
 			continue
 		if root is None or bundle["key"] not in profiles:
 			for item in bundle["files"]:
 				plan.claim(item["url"], root)
+				plan.issues.append({"url":item["url"],"person":bundle["key"],"reason":"Person target is not imported; file held for retry"})
 			continue
 		profile_name, source_hash = profiles[bundle["key"]]
-		if source_hash != bundle["source_hash"]:
-			raise ValueError("A profile source hash changed since the completed test")
+		if source_hash != bundle["source_hash"] or (evidence.get(bundle["key"]) and evidence[bundle["key"]] != bundle.get("source_evidence_hash")):
+			changed_roots.add(root)
+			for item in bundle["files"]:
+				plan.issues.append({"url":item["url"],"person":bundle["key"],"reason":"Source changed since person import; existing profile files preserved"})
+			continue
 		profile = frappe.get_doc("Red Profile", profile_name)
 		owner_documents[("Red Profile", str(profile_name))] = profile
 		if (
@@ -247,8 +262,6 @@ def build(snapshot, conf):
 		if identity in roots:
 			return True, roots[identity]
 		row = history.get(dt, name) if dt and name else None
-		if dt == "Personnel Deployment Request" and row:
-			return True, roots.get(("Employee", str(row.get("employee"))))
 		if dt == "Event Booking" and row:
 			return True, roots.get(("User", str(row.get("user"))))
 		if dt == "Event Ticket" and row:
@@ -268,6 +281,11 @@ def build(snapshot, conf):
 		personal, root = owner(dt, name)
 		if personal:
 			plan.claim(url, root)
+		if selected_keys is not None and (not personal or root not in {"person:"+k for k in selected_keys}):
+			continue
+		if root in changed_roots:
+			plan.issues.append({"url":url,"source_doctype":dt,"source_name":name,"reason":"Changed person: file retained for manual review"})
+			continue
 		target = targets.get((dt, str(name)))
 		if dt == "User" and root in profile_roots:
 			target = ("Red Profile", profile_roots[root])
@@ -276,6 +294,9 @@ def build(snapshot, conf):
 			plan.add(url, *target, file_record=file["name"])
 		elif archive:
 			plan.add(url, historical.ARCHIVE, archive.name, file_record=file["name"])
+		else:
+			plan.issues.append({"url":url,"source_doctype":dt,"source_name":name,
+				"reason":"File has neither a converted parent nor a retained archive target"})
 	metas = {}
 	native_source_types = {doctype for doctype, _name in targets}
 	for dt in history.schemas:
@@ -289,6 +310,7 @@ def build(snapshot, conf):
 		if not fields:
 			continue
 		for row in history.rows(dt):
+			if selected_keys is not None and roots.get((dt,str(row["name"]))) not in {"person:"+k for k in selected_keys}:continue
 			target = targets.get((dt, str(row["name"])))
 			if not target:
 				continue
@@ -320,11 +342,12 @@ def build(snapshot, conf):
 		url = user.get("user_image")
 		target = targets.get(("User", str(user["name"])))
 		if url and target:
+			if selected_keys is not None and roots.get(("User",str(user["name"]))) not in {"person:"+k for k in selected_keys}:continue
 			root = roots.get(("User", str(user["name"])))
 			plan.claim(url, root)
 			parent = ("Red Profile", profile_roots[root]) if root in profile_roots else target
 			plan.add(url, *parent, binding(*target, "user_image", url, kind="Attach Image"))
-	for row in history.rows("Deployment Request Tool"):
+	for row in ([] if selected_keys is not None else history.rows("Deployment Request Tool")):
 		url = row.get("tor_attachment")
 		target = targets.get(("Deployment Request Tool", str(row["name"])))
 		if not url or not target or target[0] != "VMMS Deployment":

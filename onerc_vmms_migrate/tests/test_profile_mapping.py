@@ -60,9 +60,6 @@ class TestNativeProfileFacts(TestCase):
 			"vmms_github": "https://github.com/example",
 			"vmms_residence_county": "Nairobi",
 			"vmms_residence_sub_county": "Westlands",
-			"vmms_residence_ward": "Parklands",
-			"vmms_residence_location": "Westlands",
-			"vmms_residence_sub_location": "Parklands",
 		}.items():
 			self.assertEqual(profile.get(field), value, field)
 		self.assertEqual(bundle["application"]["custom_answers"], [])
@@ -74,7 +71,7 @@ class TestNativeProfileFacts(TestCase):
 		)
 		self.assertNotIn("vmms_has_insurance", bundle["profile"])
 		self.assertFalse(bundle["application"]["custom_answers"])
-		self.assertTrue(any("reason_to_join_krcs" in warning for warning in bundle["warnings"]))
+		self.assertTrue(any(r["field"] == "motivation" and r["original_value"] == "Original motivation" for r in bundle["_review_values"]))
 
 	def test_biography_is_mapped_to_the_existing_native_user_bio(self):
 		bundle = self.build({"bio": "Original biography"})
@@ -87,8 +84,8 @@ class TestNativeProfileFacts(TestCase):
 
 	def test_invalid_count_or_url_is_reported_without_guessing(self):
 		bundle = self.build({"number_of_dependants": -1, "github": "javascript:alert(1)"})
-		self.assertTrue(any("number_of_dependants" in error for error in bundle["errors"]))
-		self.assertTrue(any("github" in error for error in bundle["errors"]))
+		self.assertTrue(any("number_of_dependants" in row["field"] for row in bundle["_review_values"]))
+		self.assertTrue(any("github" in row["field"] for row in bundle["_review_values"]))
 		self.assertNotIn("vmms_github", bundle["profile"])
 
 	def test_case_variants_are_normalized_to_supported_choices(self):

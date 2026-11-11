@@ -1,5 +1,6 @@
 """Create source vocabularies and geography without guessing identity mappings."""
 import hashlib
+import re
 
 import frappe
 
@@ -32,6 +33,14 @@ def ensure(doctype, label_field, value, key_field=None, extra=None):
     return frappe.get_doc(data).insert(ignore_permissions=True).name
 
 
+def prepare_project_types(history):
+    labels = sorted({row['project_type'] for row in history.rows('Project') if row.get('project_type')})
+    return {
+        'resolved': {label: ensure('Project Type', 'project_type', label) for label in labels},
+        'labels_for_review': [label for label in labels if label in ('health', 'DPR 146')],
+    }
+
+
 def prepare(snapshot, conf=None):
     """Called explicitly before rehearsal. Every supplied mapping takes priority."""
     history = History(snapshot)
@@ -47,7 +56,9 @@ def prepare(snapshot, conf=None):
         own_level_error=bool(correct_own_level and previous and kind=='branch'
             and frappe.db.get_value('Geo Node',previous,'geo_code')=='vmms-'+stable_key('Company\0'+str(value))
             and frappe.db.get_value('Geo Node',previous,'geo_level')!=frappe.db.get_value('Geo Node',target,'geo_level'))
-        if not previous or own_level_error:
+        approved_geo = kind == 'branch' and (normalise.key(value) == 'krcs - hq' or
+            normalise.key(value).startswith('krcs ') and frappe.db.get_value('Geo Node',target,'geo_level') == 'region')
+        if not previous or own_level_error or approved_geo:
             rows[k] = {'source_value': value, 'target': target,
                        'note': 'Imported from the source vocabulary; original record retained.'}
             report['mapped'][kind] = report['mapped'].get(kind, 0) + 1
@@ -71,6 +82,17 @@ def prepare(snapshot, conf=None):
         except Exception as exc:
             frappe.db.rollback(save_point='vmms_reference')
             report['errors'].append({'kind': kind, 'value': value, 'error': str(exc)})
+    from onerc_vmms_migrate.crosswalk import suggest_target
+    for group in ('users','applicants','employees'):
+        for row in snapshot[group].values():
+            for field,kind in (('reason_to_join_krcs','motivation'),('marital_status','marital_status'),('citizenship','citizenship'),('access_to_internet','internet_access')):
+                value=row.get(field)
+                if value:
+                    target,note=suggest_target(kind,str(value))
+                    if target:map_value(kind,value,target)
+            for child in row.get('disabilities') or []:
+                value=child.get('disability') or child.get('disability_name')
+                if value:map_value('disability_status',value,'No' if normalise.key(value)=='none' else 'Yes')
     for old, new in VOLUNTEER_STATUS_DEFAULTS.items():
         map_value('volunteer_status', old, new)
     for field, kind, dt, label, key_field in (
@@ -90,8 +112,6 @@ def prepare(snapshot, conf=None):
         ('education',('level','education_level','degree_type'),'education_level','VMMS Education Level','level_name','level_key'),
         ('driving_licence',('licence_class','class'),'driving_licence_class','VMMS Driving Licence Class','class_name','class_key'),
         ('licences',('license_type','licence_type'),'licence_type','Personnel License Type','license_type',None),
-        ('additional_skills',('additional_skill','skill','skill_name'),'skill','VMMS Skill','skill_name','skill_key'),
-        ('skill',('skill','skill_name'),'skill','VMMS Skill','skill_name','skill_key'),
     )
     for group in ('users','applicants','employees'):
         for row in snapshot[group].values():
@@ -113,6 +133,7 @@ def prepare(snapshot, conf=None):
     # legacy application questions or generic-file crosswalk projections.
     for row in history.rows('TOR Methodology'):
         ensure('VMMS TOR Methodology','methodology_name',row['name'],'methodology_key')
+    report['project_types'] = prepare_project_types(history)
     from onerc_vmms_migrate.trees import batched_trees
     with batched_trees():
         geography(history, map_value, report)
@@ -133,44 +154,54 @@ def prepare(snapshot, conf=None):
     return report
 
 
+REGION_PREFIX = re.compile(r'^KRCS\s+', re.IGNORECASE)
+
+
 def geography(history, map_value, report):
-    levels = [('national',1),('region',2),('county',3),('sub_county',4),('ward',5),('administrative_location',6),('sub_location',7)]
+    levels = [('national',1),('region',2),('county',3),('sub_county',4)]
     for level, order in levels:
         if not frappe.db.exists('Geo Level',level):
             frappe.get_doc({'doctype':'Geo Level','geo_level_key':level,'geo_level_name':level.replace('_',' ').title(),
                 'geo_level_order':order,'requires_parent':int(order>1)}).insert(ignore_permissions=True)
     def node(dt, row, label, level, parent):
+        if level == 'region':
+            # The new site names regions without the society's initials ("Coast
+            # Region", not "KRCS Coast Region"), so match and create them that way
+            # rather than adding a second region beside the seeded one.
+            label = REGION_PREFIX.sub('', label).strip() or label
         code = 'vmms-' + stable_key(dt+'\0'+row['name'])
-        found = frappe.db.get_value('Geo Node', {'geo_code':code})
+        # Resolve seeded names before old migration codes, especially where a
+        # previous preparation created prefixed region labels.
+        matches = frappe.get_all('Geo Node',filters={'geo_node_name':label,'geo_level':level,
+            'parent_geo_node':parent or ('is','not set')},pluck='name',limit=2)
+        if len(matches)>1:raise ValueError('Ambiguous geographic siblings: '+label)
+        found=matches[0] if matches else frappe.db.get_value('Geo Node', {'geo_code':code})
         if not found:
-            # A name is only reusable under the same known parent and level.
-            matches = frappe.get_all('Geo Node',filters={'geo_node_name':label,'geo_level':level,
-                'parent_geo_node':parent or ('is','not set')},pluck='name',limit=2)
-            if len(matches)==1:
-                found=matches[0]
-            elif matches:
-                raise ValueError('Ambiguous geographic siblings: '+label)
-            else:
-                siblings=frappe.get_all('Geo Node', filters={'geo_node_name':label,
-                    'parent_geo_node':parent or ('is','not set')}, pluck='name', limit=1)
-                if siblings:
-                    label += ' (' + level.replace('_', ' ').title() + ')'
-                frappe.db.savepoint('vmms_geo_node')
-                try:
-                    found=frappe.get_doc({'doctype':'Geo Node','geo_node_name':label,'geo_level':level,
-                        'parent_geo_node':parent,'geo_code':code,'is_group':int(level!='sub_location')}).insert(ignore_permissions=True).name
-                except Exception:
-                    frappe.db.rollback(save_point='vmms_geo_node')
-                    raise
+            siblings=frappe.get_all('Geo Node', filters={'geo_node_name':label,
+                'parent_geo_node':parent or ('is','not set')}, pluck='name', limit=1)
+            if siblings:
+                label += ' (' + level.replace('_', ' ').title() + ')'
+            frappe.db.savepoint('vmms_geo_node')
+            try:
+                found=frappe.get_doc({'doctype':'Geo Node','geo_node_name':label,'geo_level':level,
+                    'parent_geo_node':parent,'geo_code':code,'is_group':int(level!='sub_location')}).insert(ignore_permissions=True).name
+            except Exception:
+                frappe.db.rollback(save_point='vmms_geo_node')
+                raise
         return found
     companies={r['name']:r for r in history.rows('Company')}
     company_nodes={}
     counties={normalise.key(value) for r in history.rows('County') for value in (r['name'],r.get('county_name')) if value}
-    pending=dict(companies)
+    pending={name:row for name,row in companies.items() if normalise.key(name) != 'krcs - hq'}
     while pending:
         progress=False
         for name,row in list(pending.items()):
             parent=row.get('parent_company')
+            if parent and normalise.key(parent)=='krcs - hq' and parent not in company_nodes:
+                roots={node_name for node_name in company_nodes.values() if frappe.db.get_value('Geo Node',node_name,'geo_level')=='national'}
+                if len(roots)==1:
+                    company_nodes[parent]=next(iter(roots))
+                    map_value('branch',parent,company_nodes[parent])
             if parent and parent not in company_nodes:
                 if parent not in companies:
                     report['errors'].append({'kind':'branch','value':name,'error':'Missing company parent'})
@@ -199,15 +230,20 @@ def geography(history, map_value, report):
         if not progress:
             report['errors'].extend({'kind':'branch','value':n,'error':'Company hierarchy cycle or unresolved parent'} for n in pending)
             break
-    roots=[n for n in company_nodes.values() if frappe.db.get_value('Geo Node',n,'geo_level')=='national']
+    roots=sorted({n for n in company_nodes.values() if frappe.db.get_value('Geo Node',n,'geo_level')=='national'})
     primary=company_nodes.get('Kenya Red Cross Society') or (roots[0] if len(roots)==1 else None)
+    if any(normalise.key(name)=='krcs - hq' for name in companies):
+        if primary:
+            for name in companies:
+                if normalise.key(name)=='krcs - hq':
+                    company_nodes[name]=primary
+                    map_value('branch',name,primary)
+        else:report['errors'].append({'kind':'branch','value':'KRCS - HQ','error':'National node is unresolved'})
     maps={}
     for dt,field,label,level,parent_dt,parent_field in (
         ('County','county','county_name','county',None,None),
         ('Sub County','sub_county','sub_county_name','sub_county','County','county'),
-        ('Ward','ward',None,'ward','Sub County','sub_county'),
-        ('Administrative Location','administrative_location','location_name','administrative_location','Sub County','sub_county'),
-        ('Sub Location','sub_location','sub_location_name','sub_location','Administrative Location','location')):
+        ):
         maps[dt]={}
         for row in history.rows(dt):
             try:

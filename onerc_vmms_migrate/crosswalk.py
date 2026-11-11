@@ -36,6 +36,11 @@ UNMAPPED = object()
 
 # kind -> (target doctype, the field that labels it, special targets, what it is)
 KINDS: dict[str, dict] = {
+	"internet_access": {"choices":("Yes","No","Sometimes"),"about":"Recorded internet-access answer"},
+	"motivation": {"doctype":"VMMS Motivation","label":"motivation_name","about":"Recorded reason to join -> existing motivation"},
+	"disability_status": {"choices":("Yes","No"),"about":"Recorded disability answer -> disability status"},
+	"marital_status": {"choices":("Single","Married","Divorced","Widowed","Other"),"about":"Recorded marital status"},
+	"citizenship": {"choices":("Citizen","Non-citizen","Refugee","Migrant","Other"),"about":"Recorded citizenship"},
 	"branch": {
 		"doctype": "Geo Node",
 		"label": "geo_node_name",
@@ -126,7 +131,7 @@ class Crosswalks:
 		self.placeholder_hits: Counter = Counter()
 
 	def is_placeholder(self, kind: str, value) -> bool:
-		if normalise.key(value) in self.placeholders:
+		if kind not in ("disability_status","internet_access") and normalise.key(value) in self.placeholders:
 			self.placeholder_hits[kind] += 1
 			return True
 		return False
@@ -278,6 +283,9 @@ def suggest_target(kind: str, source_value: str) -> tuple[str, str]:
 		default = VOLUNTEER_STATUS_DEFAULTS.get(normalise.key(source_value))
 		return (default, "suggested default: confirm") if default else ("", "")
 
+	if "choices" in spec:
+		matches=[v for v in spec["choices"] if normalise.key(v)==normalise.key(source_value)]
+		return (matches[0], "auto: equivalent vocabulary spelling, confirm") if len(matches)==1 else ("", "")
 	if "doctype" not in spec:
 		return "", ""
 

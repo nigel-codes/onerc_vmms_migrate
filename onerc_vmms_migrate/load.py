@@ -73,7 +73,7 @@ PROFILE_TABLES = (
 
 
 def already_migrated(key: str) -> dict | None:
-	row = frappe.db.get_value(LEDGER, {"person_key": key}, ["source_hash", "run_id"], as_dict=True)
+	row = frappe.db.get_value(LEDGER, {"person_key": key}, ["source_hash", "source_evidence_hash", "run_id"], as_dict=True)
 	return row
 
 
@@ -90,6 +90,10 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		"warnings": [],
 	}
 
+	if bundle.get("application"):
+		bundle["application"]["emergency_contacts"] = _review_emergency_contacts(ctx,bundle["application"]["emergency_contacts"])
+		from onerc_vmms_migrate.import_review import finalise
+		finalise(bundle)
 	user = _user(ctx)
 	profile = _profile(ctx, user)
 	_files(ctx, profile)
@@ -109,6 +113,7 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 				"doctype": LEDGER,
 				"person_key": bundle["key"],
 				"source_hash": bundle["source_hash"],
+				"source_evidence_hash": bundle.get("source_evidence_hash"),
 				"run_id": run_id,
 				"migrated_on": now_datetime(),
 				**row,
@@ -131,6 +136,16 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		):
 			token.ensure(frappe.get_doc("VMMS Membership", name))
 
+	# refresh() may save the derived member status. Restore source timestamps
+	# after all native saves, without changing identity or derived membership.
+	if member:
+		for field in ("creation","modified"):
+			if bundle["member"].get(field):
+				frappe.db.set_value("VMMS Member",member,field,bundle["member"][field],update_modified=False)
+	from onerc_vmms_migrate.import_review import finalise
+	finalise(bundle)
+	if bundle.get("_review_values"):
+		frappe.db.set_value("Red Profile",profile,"data_review_values",bundle["profile"]["data_review_values"],update_modified=False)
 	guard.check()
 
 	return {
@@ -140,6 +155,7 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		"member": member,
 		"warnings": ctx["warnings"],
 		"phone_review": ctx.get("phone_review", []),
+		"review_values": bundle.get("_review_values", []),
 	}
 
 
@@ -160,7 +176,7 @@ def _name_proof(ctx, source_doctype, source_name, target_doctype, target_name):
 	frappe.get_doc({"doctype": LEDGER, "person_key": ctx["bundle"].get("key") or "account:" + target_name,
 		"source_doctype": source_doctype, "source_name": source_name,
 		"target_doctype": target_doctype, "target_name": target_name, "outcome": "created",
-		"source_hash": ctx["bundle"].get("source_hash"), "run_id": ctx["run_id"],
+		"source_hash": ctx["bundle"].get("source_hash"), "source_evidence_hash": ctx["bundle"].get("source_evidence_hash"), "run_id": ctx["run_id"],
 		"migrated_on": now_datetime()}).insert(ignore_permissions=True)
 
 
@@ -250,6 +266,8 @@ def _user(ctx) -> str | None:
 			(user.name, login["password_hash"]),
 		)
 
+	from onerc_vmms_migrate.account_roles import apply as apply_roles
+	apply_roles(user,login)
 	_ledger(ctx, "User", login["source_name"], "User", user.name)
 	return user.name
 
@@ -341,7 +359,7 @@ def _check_phone(ctx, data, field="phone", label="phone", society=True, required
 		frappe.clear_last_message()
 		if not ctx["conf"].get("drop_invalid_phones"):
 			raise
-		action = "contact omitted" if required else "phone left blank"
+		action = "phone left blank; contact retained" if required else "phone left blank"
 		ctx["warnings"].append(f"{label}: {data[field]} fails destination phone validation; {action}; original retained in source capture/archive")
 		ctx.setdefault("phone_review", []).append({"field": label, "original_value": data[field], "action": action})
 		data[field] = None
@@ -355,19 +373,16 @@ def _review_profile_phones(ctx, data):
 
 
 def _review_emergency_contacts(ctx, rows):
-	# A contact requires a primary phone. Keep its original in the source,
-	# rather than inventing a replacement or relaxing ordinary signup rules.
-	contacts = deepcopy(rows)
-	retained = []
-	for index, row in enumerate(contacts, 1):
-		_check_phone(ctx, row, "primary_phone", f"emergency_contacts[{index}].primary_phone", society=False, required=True)
-		if not row.get("primary_phone"):
-			continue
-		_check_phone(ctx, row, "alternative_phone", f"emergency_contacts[{index}].alternative_phone", society=False)
-		retained.append(row)
+	from onerc_vmms_migrate.import_review import record
+	contacts=deepcopy(rows)
+	for index,row in enumerate(contacts,1):
+		for field in ("primary_phone","alternative_phone"):
+			before=row.get(field)
+			_check_phone(ctx,row,field,f"emergency_contacts[{index}].{field}",society=False)
+			if before and not row.get(field):record(ctx["bundle"],f"emergency_contacts[{index}].{field}",before,"Invalid phone; contact retained")
 	from onerc_vmms_migrate.emergency_contacts import prepare
-	prepare(retained)
-	return retained
+	prepare(contacts,lambda field,value:record(ctx["bundle"],field,value,"Relationship absent from target vocabulary; contact retained"))
+	return contacts
 
 
 # --- files ----------------------------------------------------------------------
@@ -382,29 +397,12 @@ def _files(ctx, profile: str) -> None:
 		return
 
 	doc = frappe.get_doc("Red Profile", profile)
-	changed = False
-
+	from onerc_vmms_migrate.attachment_plan import profile_binding
+	from onerc_vmms_migrate.trial_attachments import apply_binding
 	for item in files:
-		url = _copy_file(ctx, item["url"], "Red Profile", profile, private=item["purpose"] != "photo")
-		if not url:
-			continue
-
-		if item["purpose"] == "photo" and not doc.get("profile_photo"):
-			doc.profile_photo = url
-			changed = True
-		elif item["purpose"] == "identification":
-			rows = doc.get("identifications") or []
-			if item["index"] < len(rows) and not rows[item["index"]].get("attachment"):
-				rows[item["index"]].attachment = url
-				changed = True
-		elif item["purpose"] == "table":
-			rows = doc.get(item["table"]) or []
-			if item["index"] < len(rows) and not rows[item["index"]].get("attachment"):
-				rows[item["index"]].attachment = url
-				changed = True
-
-	if changed:
-		doc.save(ignore_permissions=True)
+		link=profile_binding(ctx["bundle"],item,doc)
+		url=_copy_file(ctx,item["url"],"Red Profile",profile,private=True)
+		if url and link:apply_binding(link,url)
 
 
 def _copy_file(ctx, url: str, doctype: str, name: str, private: bool) -> str | None:
@@ -435,6 +433,7 @@ def _copy_file(ctx, url: str, doctype: str, name: str, private: bool) -> str | N
 
 def _volunteer(ctx, profile: str) -> str:
 	from vmmsx.volunteer.services import volunteer as volunteer_service
+	from onerc_vmms_migrate.people_applications import decisions
 	from onerc_vmms_migrate.identity import assert_same_name, create
 
 	data = ctx["bundle"]["volunteer"]
@@ -449,7 +448,8 @@ def _volunteer(ctx, profile: str) -> str:
 
 	volunteer = create("VMMS Volunteer", profile, [data["source_name"]], {"home_geo_node": data["home_geo_node"]})
 	volunteer.joined_on = data["joined_on"]
-	volunteer.set("skills", [{"skill": s} for s in data["skills"]])
+	volunteer.set("skills", [])
+	volunteer.set("emergency_contacts", _review_emergency_contacts(ctx, application["emergency_contacts"]))
 	volunteer.set("languages", [{"language": lang} for lang in data["languages"]])
 
 	if data["status"] in volunteer_service.EXPLICIT_STATUSES:
@@ -472,6 +472,9 @@ def _volunteer(ctx, profile: str) -> str:
 			"emergency_contacts": _review_emergency_contacts(ctx, application["emergency_contacts"]),
 			"custom_answers": [_answer(row) for row in application["custom_answers"]],
 			"approval_state": "Draft",
+			"created_by_migration": int(application.get("created_by_migration", False)),
+			"approval_decisions": decisions(ctx["source"].data.get("applicants",{}).get(application["source_name"],{})) if hasattr(ctx["source"],"data") else [],
+			"motivation": application.get("motivation", []),
 		}
 	)
 	app.insert(ignore_permissions=True)
@@ -520,17 +523,19 @@ def _member(ctx, profile: str) -> str:
 		member = frappe.get_doc("VMMS Member", existing)
 	else:
 		meta = frappe.get_meta("VMMS Member")
-		values = {field: value for field, value in {"legacy_member_id": source_name, "customer": data.get("customer")}.items()
+		values = {field: value for field, value in {"legacy_member_id": source_name, "customer_name": data.get("customer_name"),
+		    "customer": data.get("customer") if data.get("customer") and frappe.db.exists("Customer",data["customer"]) else None}.items()
 		          if meta.has_field(field) and value is not None}
 		member = create("VMMS Member", profile, data["source_names"], values)
 	if data["joined_on"] and not member.joined_on:
 		member.db_set("joined_on", data["joined_on"], update_modified=False)
+	for field in ("creation","modified"):
+		if data.get(field):frappe.db.set_value("VMMS Member",member.name,field,data[field],update_modified=False)
 	for source_name in data["source_names"]:
 		_ledger(ctx, "VM Member", source_name, "VMMS Member", member.name)
 
 	for row in bundle["memberships"]:
-		membership_type = frappe.get_cached_doc("VMMS Membership Type", row["membership_type"])
-		valid_to = None if membership_type.is_lifetime else row["valid_to"]
+		valid_to = row["valid_to"]
 
 		doc = frappe.get_doc(
 			{
@@ -538,7 +543,7 @@ def _member(ctx, profile: str) -> str:
 				"member": member.name,
 				"membership_type": row["membership_type"],
 				"geo_node": row["geo_node"],
-				"membership_source": "Gateway",
+				"membership_source": None,
 				"membership_status": row["membership_status"],
 				"valid_from": row["valid_from"],
 				"valid_to": valid_to,
@@ -553,6 +558,11 @@ def _member(ctx, profile: str) -> str:
 		from onerc_vmms_migrate.historical import insert
 		values = {k:v for k,v in doc.as_dict().items() if k not in ("doctype", "name")}
 		meta = frappe.get_meta("VMMS Membership")
+		from onerc_vmms_migrate.membership_import import values as historical_values
+		for field in ("legacy_membership_id", "accounting_status"):
+			if not meta.has_field(field):
+				raise ValueError("Required historical membership marker is absent: " + field)
+		values.update(historical_values(row))
 		for field, value in {"legacy_membership_id": row["source_name"], "amount": row.get("amount"),
 		                     "currency": row.get("currency"), "member_since_date": row.get("member_since_date"),
 		                     "fee_snapshot_taken": int(row.get("amount") is not None)}.items():

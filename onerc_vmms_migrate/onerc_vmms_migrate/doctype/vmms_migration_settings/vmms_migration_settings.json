@@ -13,6 +13,7 @@
   "preserve_passwords",
   "restore_email_link_login",
   "default_country_code",
+  "import_with_review",
   "drop_invalid_phones",
   "emergency_contact_may_call",
   "allow_missing_files",
@@ -20,7 +21,8 @@
   "allow_missing_history_dependencies",
   "history_branch_overrides",
   "browser_capture",
-  "migration_dashboard"
+  "migration_dashboard",
+  "people_import_active"
  ],
  "fields": [
   {
@@ -79,7 +81,8 @@
    "fieldname": "drop_invalid_phones",
    "fieldtype": "Check",
    "label": "Allow phone numbers requiring review",
-   "description": "Leave invalid profile and reference phones blank and report their original values for review. Omit emergency contacts with invalid required primary phones. Originals remain in the protected source capture/archive; the main original phone also stays on the profile."
+   "description": "Keep contacts and people. Leave only invalid phones blank and report the originals.",
+   "default": "1"
   },
   {
    "fieldname": "emergency_contact_may_call",
@@ -122,6 +125,19 @@
    "label": "Preserve source email-link sign-in",
    "default": "1",
    "description": "When the source uses email-link login, preserve that sign-in route for accounts without a local password. Existing destination MFA is never disabled. Configure and test destination email delivery before cutover."
+  },
+  {
+   "fieldname": "import_with_review",
+   "fieldtype": "Check",
+   "label": "Import people with field review",
+   "default": "1",
+   "description": "Keep the person and retain incompatible values in the original-value review report."
+  },
+  {
+   "fieldname": "people_import_active",
+   "fieldtype": "Check",
+   "label": "People migration isolation active",
+   "read_only": 1
   }
  ],
  "permissions": [

@@ -1,23 +1,16 @@
-"""Represent a missing legacy relationship without guessing how people are related."""
+"""Resolve actual relationship names, including inactive historical words."""
+UNKNOWN_RELATIONSHIP = "Not recorded"  # A valid source word, never a fallback.
 
-UNKNOWN_RELATIONSHIP = "Not recorded"
 
-
-def prepare(contacts):
-    if not any(row.get("relationship") == UNKNOWN_RELATIONSHIP for row in contacts):
-        return
+def prepare(contacts, review=None):
     import frappe
-
-    field = frappe.get_meta("VMMS Emergency Contact").get_field("relationship")
-    if field and field.fieldtype == "Data":
-        return
-    if not field or field.fieldtype != "Link" or field.options != "VMMS Relationship":
-        raise ValueError("The installed emergency-contact relationship field needs an explicit migration mapping.")
-    if not frappe.db.exists(field.options, UNKNOWN_RELATIONSHIP):
-        frappe.get_doc({
-            "doctype": field.options,
-            "relationship_name": UNKNOWN_RELATIONSHIP,
-            "is_active": 0,
-            "sequence": 9999,
-            "description": "The legacy source did not record this contact's relationship. Retained for historical migration; ask the person to update it. Hidden from new application choices.",
-        }).insert(ignore_permissions=True)
+    for index,row in enumerate(contacts,1):
+        value=row.get("relationship")
+        if not value:continue
+        # MariaDB's case-insensitive lookup returns the stored canonical name.
+        actual=frappe.db.exists("VMMS Relationship",value)
+        if actual:
+            row["relationship"]=actual
+        else:
+            if review:review(f"emergency_contacts[{index}].relationship",value)
+            row["relationship"]=None

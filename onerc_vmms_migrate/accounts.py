@@ -13,7 +13,7 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
     if "_migration_identity_emails" not in snapshot or not conf.get("assign_missing_emails"):
         prepare(snapshot, conf)
     result = {'loaded': 0, 'existing': 0, 'failed': [], 'without_password': 0,
-              'roles_requiring_review': [], 'excluded': [], 'total': len(snapshot['users']), 'placeholder_accounts': 0}
+              'roles_requiring_review': [], 'excluded': [], 'total': len(snapshot['users']), 'placeholder_accounts': 0, 'changed': []}
     workspace.write_json(workspace.path('account-failures-in-progress.json'),[])
     processed = 0
     for index, row in enumerate(snapshot['users'].values(), 1):
@@ -22,6 +22,12 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
         processed += 1
         email = login_email(snapshot,row)
         if row['name'] in ('Administrator','Guest'):
+            continue
+        fingerprint=hashlib.sha256(canonical(row).encode()).hexdigest()
+        prior=frappe.db.get_value(load.LEDGER,{'person_key':'account:'+email},'source_hash') if email else None
+        if prior and prior!=fingerprint:
+            result['changed'].append({'source_user':row['name'],'action':'Source account changed; existing credentials, state and roles preserved'})
+            result['existing']+=1
             continue
         password = snapshot.get('password_hashes', {}).get(row['name'])
         roles = [r.get('role') for r in row.get('roles') or [] if r.get('role')]
@@ -37,11 +43,12 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
             existed = bool(frappe.db.exists('User',email))
             login = {'email':email,'source_name':row['name'],'enabled':int(bool(row.get('enabled'))),
                 'password_hash':password,'social_logins':row.get('social_logins') or [],
+                'old_roles':roles,'role_profile_name':row.get('role_profile_name'),'user_type':row.get('user_type'),
                 **{f:row.get(f) for f in ('username','mobile_no','login_after','login_before','restrict_ip','language','time_zone','bio')}}
             placeholder = not (normalise.email(row.get('email')) or normalise.email(row['name']))
             if placeholder:
                 login['legacy_email_placeholder'] = 1
-            context={'bundle':{'user':login,'profile':{'first_name':row.get('first_name') or email,
+            context={'bundle':{'user':login,'profile':{'first_name':row.get('first_name') or '',
                 'middle_name':row.get('middle_name'),'last_name':row.get('last_name') or ''}},
                 'conf':conf,'ledger':[],'warnings':[],'run_id':run_id}
             context['bundle']['key']='account:'+email

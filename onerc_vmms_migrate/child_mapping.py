@@ -6,7 +6,6 @@ from onerc_vmms_migrate import normalise
 
 NATIVE_TABLES = {
 	"certification": "vmms_certifications",
-	"additional_skills": "vmms_additional_skills",
 	"allergies": "vmms_allergies",
 	"supporting_documents": "vmms_supporting_documents",
 }
@@ -24,6 +23,10 @@ BOOKKEEPING = frozenset(
 		"docstatus",
 	}
 )
+
+
+def raw_text(value):
+	return "" if value is None else str(value)
 
 
 def selected_rows(bundle, field, *records):
@@ -44,33 +47,40 @@ def selected_rows(bundle, field, *records):
 
 
 def details(bundle, profile, user, applicant):
-	for source, field in (("additional_skills", "additional_skill"), ("allergies", "allergy")):
+	for source, field in (("allergies", "allergy"),):
 		profile[NATIVE_TABLES[source]] = [
-			{field: normalise.text(row.get(field))}
+			{field: raw_text(row.get(field))}
 			for row in selected_rows(bundle, source, user, applicant)
-			if normalise.text(row.get(field))
+			if raw_text(row.get(field))
 		]
 	certifications = []
 	for row in selected_rows(bundle, "certification", user, applicant):
-		name = normalise.text(row.get("certification_name"))
+		name = raw_text(row.get("certification_name"))
 		if not name:
-			bundle["errors"].append("certification row has no certification_name; original retained")
-			continue
+			if bundle.get("_import_with_review"):
+				from onerc_vmms_migrate.import_review import record
+				record(bundle,"vmms_certifications.certification_name",row,"Certification name was not recorded")
+			else:
+				bundle["errors"].append("certification row has no certification_name; original retained")
+				continue
 		item = {
-			field: normalise.text(row.get(field))
+			field: raw_text(row.get(field))
 			for field in ("certification_name", "organization", "description")
 		}
 		item["expire"] = int(str(row.get("expire") or 0) == "1")
 		for field in ("issue_date", "expiration_date"):
 			item[field] = normalise.date(row.get(field))
 			if row.get(field) and item[field] is None:
-				bundle["errors"].append("certification " + field + " is invalid; original retained")
+				if bundle.get("_import_with_review"):
+					from onerc_vmms_migrate.import_review import record
+					record(bundle,"vmms_certifications."+field,row[field],"Invalid source date")
+				else:bundle["errors"].append("certification " + field + " is invalid; original retained")
 		certifications.append(item)
 	profile["vmms_certifications"] = certifications
 	profile["vmms_supporting_documents"] = []
 	for row in selected_rows(bundle, "supporting_documents", user, applicant):
 		item = {
-			field: normalise.text(row.get(field)) for field in ("type", "document_name") if row.get(field)
+			field: raw_text(row.get(field)) for field in ("type", "document_name") if row.get(field)
 		}
 		if not item and not row.get("attachment"):
 			continue

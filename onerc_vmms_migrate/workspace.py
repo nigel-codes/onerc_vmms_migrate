@@ -37,11 +37,11 @@ DEFAULTS = {
 	"default_country_code": None,
 	# A phone the society's pattern refuses: reject the person (strict) or
 	# load them without a phone and list them in warnings.csv.
-	"drop_invalid_phones": False,
+	"drop_invalid_phones": True,
 	# Explicitly approved legacy-only aliases; no login or password is invented.
 	"assign_missing_emails": False,
-	"import_with_review": False,
-	"residence_levels": ["sub_location", "administrative_location", "ward", "sub_county", "county"],
+	"import_with_review": True,
+	"residence_levels": ["sub_county", "county"],
 	"allow_missing_history_dependencies": False,
 	# HRMS kept one emergency contact on the Employee. Whether the person agreed
 	# to that contact being called is not recorded there, so it is a decision.
@@ -85,6 +85,7 @@ def history_branch_overrides(value) -> dict:
 def config() -> frappe._dict:
 	conf = frappe._dict(DEFAULTS)
 	conf.update(frappe.conf.get(CONFIG_KEY) or {})
+	overrides = history_branch_overrides(conf.get("history_branch_overrides"))
 	if frappe.db.exists("DocType", "VMMS Migration Settings"):
 		settings = frappe.get_single("VMMS Migration Settings")
 		if settings.browser_capture:
@@ -93,8 +94,11 @@ def config() -> frappe._dict:
 					"browser_capture": settings.browser_capture,
 					"default_country_code": settings.default_country_code,
 					"drop_invalid_phones": bool(settings.drop_invalid_phones),
+					"import_with_review": bool(settings.get("import_with_review")),
 					"allow_missing_history_dependencies": bool(settings.get("allow_missing_history_dependencies")),
-					"history_branch_overrides": settings.get("history_branch_overrides"),
+					"history_branch_overrides": {
+						**overrides, **history_branch_overrides(settings.get("history_branch_overrides"))
+					},
 					"emergency_contact_may_call": bool(settings.emergency_contact_may_call),
 					"preserve_passwords": bool(settings.get("preserve_passwords")),
 					"allow_missing_files": bool(settings.get("allow_missing_files")),

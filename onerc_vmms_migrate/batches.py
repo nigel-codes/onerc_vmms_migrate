@@ -46,6 +46,10 @@ PUBLIC = (
 	"last_batch",
 	"error",
 	"versions_reviewed",
+	"scope",
+	"auto_continue",
+	"people_offset",
+	"people_naming",
 )
 
 
@@ -237,6 +241,9 @@ def work(snapshot, source, conf, value, progress):
 	"""One bounded unit; transaction ownership belongs to step()."""
 	from onerc_vmms_migrate import full_run
 
+	if value.get("scope")=="people":
+		from onerc_vmms_migrate.people_run import work
+		return work(snapshot,source,conf,value,progress)
 	phase, start, size = value["phase"], value["offset"], value["batch_size"]
 	deadline = time.monotonic() + 240
 
@@ -286,6 +293,10 @@ def work(snapshot, source, conf, value, progress):
 		failures = summary.pop("failed")
 		return summary.pop("processed"), len(snapshot["users"]), failures, summary
 	if phase == "people":
+		if "people_naming" not in value:
+			from onerc_vmms_migrate.naming_continuity import reserve_people
+
+			value["people_naming"] = reserve_people(snapshot)
 		return people(snapshot, source, conf, value, stop, progress)
 	if phase == "history":
 		from onerc_vmms_migrate.history_load import Loader
@@ -439,6 +450,8 @@ def step(value, source, conf, progress=None):
 
 	name = f"batch-{value['attempt_number']:06d}-{phase}"
 	run._write_csv(directory, name + "-failures.csv", failures)
+	for kind in ("held","external","changed","review_values"):
+		if summary.get(kind):run._write_csv(directory,name+"-"+kind+".csv",summary[kind])
 	if summary.get("phone_review"):
 		run._write_csv(directory, name + "-phone-review.csv", summary["phone_review"])
 	if summary.get("warnings"):
@@ -457,7 +470,11 @@ def step(value, source, conf, progress=None):
 			"fingerprint": value["fingerprint"],
 		},
 	)
-	advance(value, processed, total, len(failures))
+	if value.get("scope")=="people":
+		from onerc_vmms_migrate.people_run import advance as people_advance
+		people_advance(value,processed,total,len(failures))
+	else:
+		advance(value, processed, total, len(failures))
 	if phase == "verification" and not failures:
 		value["status"] = "finished"
 		value["verification"] = summary

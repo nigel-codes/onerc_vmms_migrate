@@ -168,10 +168,11 @@ class TestCaptureFinalization(TestCase):
 	setUp = TestBrowserControls.setUp
 	def test_registration_reopens_idle_connection_before_writing(self):
 		database = MagicMock()
-		with patch.object(frappe, "db", database):
-			browser._register_capture("a" * 32)
+		with patch.object(frappe, "db", database),patch("builtins.open",__import__('unittest.mock',fromlist=['mock_open']).mock_open(read_data='{"source":{"source_id":"S"}}')):
+			with patch.object(browser.workspace,"path",return_value="/tmp/snapshot.json"),patch("onerc_vmms_migrate.people_run.check_source"):
+				browser._register_capture("a" * 32)
 		self.assertEqual([call[0] for call in database.mock_calls],
-			["close", "connect", "set_single_value", "commit"])
+			["close", "connect", "get_single_value", "set_single_value", "commit"])
 		database.set_single_value.assert_called_once_with(browser.SETTINGS, "browser_capture", "a" * 32)
 
 	def test_explicit_resume_requires_local_transfer_and_capture_action(self):
@@ -272,6 +273,7 @@ class TestServiceRecovery(TestCase):
 			patch.object(browser, "state", return_value=value),
 			patch("frappe.utils.scheduler.toggle_scheduler") as scheduler,
 			patch("frappe.installer.update_site_config") as config,
+			patch.object(frappe,"db",MagicMock()),
 		):
 			browser.finish_cutover("RESTORE")
 		scheduler.assert_called_once_with(False)

@@ -91,7 +91,7 @@ class TestTrialAttachments(TestCase):
 				"doctype": "Red Profile",
 				"name": "P1",
 				"sha256": digest,
-				"owner_chain": ["verified owner"],
+				"owner_chain": [{"doctype":"User","name":"person@example.org","fields":{}}],
 				"bindings": [],
 				"file_records": [],
 			}
@@ -105,7 +105,7 @@ class TestTrialAttachments(TestCase):
 				patch.object(frappe, "db", MagicMock()) as db,
 				patch.object(frappe, "get_all", return_value=[file]),
 				patch.object(frappe, "get_doc", return_value=doc),
-				patch.object(files.attachment_plan, "owner_chain", return_value=["verified owner"]),
+				patch.object(files.attachment_plan, "owner_chain", return_value=[{"doctype":"User","name":"person@example.org","fields":{}}]),
 				patch.object(files, "copy_verified") as copy,
 			):
 				db.exists.return_value = True

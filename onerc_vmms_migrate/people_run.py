@@ -87,6 +87,7 @@ def import_people(snapshot, source, conf, value, selected, progress=None):
 		"phone_review": [],
 		"held": [],
 		"review_values": [],
+		"password_restorations": [],
 		"processed": 0,
 	}
 	deadline = time.monotonic() + 240
@@ -116,6 +117,7 @@ def import_people(snapshot, source, conf, value, selected, progress=None):
 			historical.archive(snapshot, value["run_id"], records=core_records(snapshot, bundle))
 			written = load.load_bundle(bundle, source, {**conf, "defer_profile_files": True}, value["run_id"])
 			batches.mark_person(snapshot, bundle, written, value["run_id"])
+			report["password_restorations"].extend(written.get("password_restorations", []))
 			report["phone_review"].extend(
 				{"person": bundle["key"], **row} for row in written.get("phone_review", [])
 			)

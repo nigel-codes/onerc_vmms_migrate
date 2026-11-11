@@ -12,7 +12,7 @@ from onerc_vmms_migrate import normalise, transform
 from onerc_vmms_migrate.crosswalk import Crosswalks
 
 TODAY = datetime.date(2026, 9, 23)
-CONF = {"default_country_code": "254", "emergency_contact_may_call": False}
+CONF = {"default_country_code": "254", "emergency_contact_may_call": False, "import_with_review": True}
 
 
 def crosswalks(**overrides) -> Crosswalks:
@@ -27,6 +27,10 @@ def crosswalks(**overrides) -> Crosswalks:
 		"residence": {"county:Nairobi": "GEO-NBI-COUNTY"},
 		"question": {"blood_group": "-"},
 		"disability": {"Visual": "Seeing"},
+		"disability_status": {"None":"No","Visual":"Yes"},
+		"marital_status":{"single":"Single"},
+		"citizenship":{"Non-Citizen":"Non-citizen"},
+		"internet_access":{"sometimes":"Sometimes"},
 	}
 	for kind, rows in overrides.items():
 		table[kind] = rows
@@ -322,7 +326,8 @@ class TestDefaultRow(TestCase):
 			}
 		}
 		(b,) = self.build(snapshot(users=users, employees={"E": volunteer_employee()}), cw)["bundles"]
-		self.assertTrue(any("Unmapped ward" in e for e in b["warnings"]))
+		self.assertNotIn("vmms_residence_ward", b["profile"])
+		self.assertFalse(cw.seen["residence"].get("ward:kilimani"))
 		self.assertEqual(b["profile"]["home_geo_node"], "GEO-NBI-COUNTY")
 
 	def test_unmapped_branch_still_collects_every_other_value(self):
@@ -338,7 +343,7 @@ class TestDefaultRow(TestCase):
 		employee = volunteer_employee(company="Nowhere Branch")
 		self.build(snapshot(users=users, employees={"E": employee}), cw)
 		self.assertIn("fr", cw.seen["language"])
-		self.assertIn("radio", cw.seen["skill"])
+		self.assertFalse(cw.seen["skill"])
 
 
 PLACEHOLDER_CONF = {**CONF, "placeholder_values": ["none", "unknown"]}
@@ -381,7 +386,7 @@ class TestPlaceholders(TestCase):
 			TODAY,
 		)["bundles"]
 		self.assertEqual(b["errors"], [])
-		self.assertNotIn("vmms_disability_status", b["profile"])
+		self.assertEqual(b["profile"].get("vmms_disability_status"), "No")
 
 
 class TestUntypedLegacyIdentifier(TestCase):
@@ -417,7 +422,8 @@ class TestLosslessLegacyDetails(TestCase):
         bundle=transform.build(snapshot(users={user['name']:user},employees={'E':volunteer_employee()}),crosswalks(),CONF,TODAY)['bundles'][0]
         education=bundle['profile']['vmms_education'][0]
         self.assertEqual(education['legacy_institution'],text)
-        self.assertLessEqual(len(education['institution']),140)
+        self.assertIsNone(education['institution'])
+        self.assertIn(text, bundle['profile']['data_review_values'])
         reference=bundle['profile']['vmms_references'][0]
         self.assertIsNone(reference['email'])
         self.assertEqual(reference['legacy_email'],'not-an-email')

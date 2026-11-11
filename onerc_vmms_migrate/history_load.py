@@ -95,7 +95,7 @@ class Loader:
         return target
 
     def geo(self, company):
-        override = (self.conf.get('history_branch_overrides') or {}).get(company)
+        override = (self.conf.get('history_branch_overrides') or {}).get(company) if normalise.key(company) != 'krcs - hq' else None
         if override:
             if not frappe.db.exists('Geo Node', override):
                 raise ValueError('History Geo Node does not exist: '+str(override))
@@ -478,6 +478,7 @@ class Loader:
                 self.one(dt,row,dt,lambda r,dt=dt:self.copy_values(dt,r),name=row['name'])
 
     def applications(self):
+        from onerc_vmms_migrate.people_applications import decisions
         for row in self.history.rows('Job Applicant'):
             if not row.get('is_volunteer'):continue
             existing=self.by_source.get(('Job Applicant',row['name'],'VMMS Volunteer Application'))
@@ -495,7 +496,9 @@ class Loader:
                 # created. Keep that distinction in the original source record.
                 # Insert historical state directly; no auto-accept hook runs.
                 return {'red_profile':profile,'geo_node':self.geo(r.get('company')),
-                    'applied_on':normalise.date(r.get('creation')),'approval_state':state}
+                    'applied_on':normalise.date(r.get('creation')),'approval_state':state,
+                    'legacy_orphan_application':int(state=='Approved'),
+                    'approval_decisions':decisions(r)}
             self.one('Job Applicant',row,'VMMS Volunteer Application',build)
 
     def availability(self):

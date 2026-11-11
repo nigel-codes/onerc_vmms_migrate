@@ -15,6 +15,7 @@
   "section_break_run",
   "outcome",
   "source_hash",
+  "source_evidence_hash",
   "run_id",
   "migrated_on"
  ],
@@ -27,6 +28,7 @@
   {"fieldname": "target_name", "fieldtype": "Dynamic Link", "in_list_view": 1, "label": "New Record", "options": "target_doctype", "read_only": 1, "search_index": 1},
   {"fieldname": "section_break_run", "fieldtype": "Section Break"},
   {"description": "created: this run made the record. adopted: it already existed on this site and was linked, with only empty fields filled.", "fieldname": "outcome", "fieldtype": "Select", "label": "Outcome", "options": "created\nadopted", "read_only": 1},
+  {"fieldname": "source_evidence_hash", "fieldtype": "Data", "label": "Extended source evidence hash", "read_only": 1},
   {"description": "SHA-256 of the person's old rows at extraction. A later run that sees a different hash reports the person as changed since migration.", "fieldname": "source_hash", "fieldtype": "Data", "label": "Source Hash", "read_only": 1},
   {"fieldname": "run_id", "fieldtype": "Data", "in_standard_filter": 1, "label": "Run", "read_only": 1},
   {"fieldname": "migrated_on", "fieldtype": "Datetime", "label": "Migrated On", "read_only": 1}

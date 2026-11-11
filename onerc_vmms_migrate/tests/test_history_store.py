@@ -39,3 +39,21 @@ class TestTreeBatching(TestCase):
     def test_missing_parent_and_cycles_are_rejected(self):
         for rows in ([{'name':'A','parent':'missing'}],[{'name':'A','parent':'B'},{'name':'B','parent':'A'}]):
             with self.assertRaises(ValueError):boundaries(rows,'parent')
+
+class TestVersionKeysetPages(TestCase):
+    def test_version_pages_use_original_ids_and_filter_to_people(self):
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'capture.sqlite'
+            rows=[{'doctype':'Version','record':{'name':name,'ref_doctype':kind,'docname':'P','data':'{}'}}
+                for name,kind in (('V1','Employee'),('V2','Project'),('V3','User'),('V4','VM Membership'))]
+            with closing(sqlite3.connect(path)) as db:
+                db.execute('CREATE TABLE records (dataset TEXT,record_key TEXT,payload TEXT,sha256 TEXT,PRIMARY KEY(dataset,record_key))')
+                db.executemany('INSERT INTO records VALUES (?,?,?,?)', [('history',str(i),json.dumps(row),'hash') for i,row in enumerate(rows)])
+                db.commit();index(db)
+            store=SQLiteHistory(path,4)
+            first=store.versions_page('',2,('Employee','User','VM Membership'))
+            second=store.versions_page(first[-1]['name'],2,('Employee','User','VM Membership'))
+            self.assertEqual([r['name'] for r in first],['V1','V3'])
+            self.assertEqual([r['name'] for r in second],['V4'])
+            self.assertEqual(store.get_record('Version','V1')['ref_doctype'],'Employee')

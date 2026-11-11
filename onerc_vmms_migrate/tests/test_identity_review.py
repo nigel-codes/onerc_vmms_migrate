@@ -18,7 +18,7 @@ class TestIdentityReview(TestCase):
         self.assertEqual(row["source_name"], "E")
         self.assertEqual(json.loads(row["original_names"])["first_name"], "Amina")
         self.assertIsNone(json.loads(row["original_names"])["last_name"])
-        self.assertEqual(row["native_status"], "blocked_pending_resolution")
+        self.assertEqual(row["native_status"], "eligible_pending_native_validation")
 
     def test_each_shared_member_identifier_gets_its_own_report_row(self):
         snap = snapshot(members={name: {"name": name, "email_id": "shared@example.org",

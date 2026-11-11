@@ -29,13 +29,13 @@ def first_value(field, *records):
 
 def choice(value, options):
 	"""Normalize equivalent casing only; never guess a different answer."""
-	value = normalise.text(value)
+	value = str(value)
 	return next((option for option in options if option.casefold() == value.casefold()), None)
 
 
-def personal_details(bundle, profile, user, employee, applicant, conf):
+def personal_details(bundle, profile, user, employee, applicant, conf, cw=None):
 	for source, target in DIRECT_SCALARS.items():
-		if source in ("county", "sub_county", "ward", "administrative_location", "sub_location") and source not in conf.get("residence_levels", DIRECT_SCALARS):
+		if source in ("ward","administrative_location","sub_location") or (source in ("county","sub_county") and source not in conf.get("residence_levels", ("county","sub_county"))):
 			continue
 		# Employee has blood_group; the other registration answers belong to
 		# User/Applicant. Preserve this explicit source precedence.
@@ -60,18 +60,32 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 			profile["vmms_dependants_answered"] = int(int(value) > 0)
 			continue
 		if source == "access_to_internet":
-			answer = choice(value, ("Yes", "No", "Sometimes"))
+			answer=value if value in ("Yes","No","Sometimes") else None
+			if answer is None and cw:
+				from onerc_vmms_migrate.crosswalk import DROP,UNMAPPED
+				mapped=cw.lookup("internet_access",value)
+				answer=mapped if mapped and mapped not in (DROP,UNMAPPED) else None
 			if answer is None:
-				bundle["errors"].append("access_to_internet has an unsupported choice; original retained")
+				if conf.get("import_with_review"):
+					from onerc_vmms_migrate.import_review import record
+					record(bundle,target,value,"Unsupported internet-access choice")
+				else:bundle["errors"].append("access_to_internet has an unsupported choice; original retained")
 				continue
 			value = answer
 		elif source == "mpesa_mobile_phone":
+			original=value
 			value = normalise.phone(value, conf.get("default_country_code"))
+			if original != value:
+				from onerc_vmms_migrate.import_review import record
+				record(bundle,target,original,"Original phone form retained","original retained alongside payment phone")
 			if not value:
-				bundle["errors"].append("mpesa_mobile_phone has no usable number; original retained")
+				if conf.get("import_with_review"):
+					from onerc_vmms_migrate.import_review import record
+					record(bundle,target,original,"No usable payment phone")
+				else:bundle["errors"].append("mpesa_mobile_phone has no usable number; original retained")
 				continue
 		elif source in ("linkedin", "github"):
-			value = str(value).strip()
+			value = str(value)
 			try:
 				parts = urlsplit(value)
 				valid = (
@@ -92,10 +106,6 @@ def personal_details(bundle, profile, user, employee, applicant, conf):
 				)
 				continue
 		else:
-			value = normalise.text(value)
+			value = str(value)
 		if value not in (None, ""):
 			profile[target] = value
-	if first_value("reason_to_join_krcs", user, applicant):
-		bundle["warnings"].append(
-			"reason_to_join_krcs preserved in original application history; no equivalent free-text motivation field"
-		)

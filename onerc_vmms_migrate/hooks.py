@@ -13,7 +13,14 @@ required_apps = ["erpnext", "onerc_core", "vmmsx", "buzz"]
 
 extend_doctype_class = {
     "Email Queue": ["onerc_vmms_migrate.placeholder_mail.PlaceholderEmailGuard"],
-    "Red Profile": ["onerc_vmms_migrate.import_review.ImportedNamesMixin"],
+    "Red Profile": ["onerc_vmms_migrate.import_review.ImportedNamesMixin", "onerc_vmms_migrate.import_review.ImportedDatesMixin"],
+    "VMMS Disability Selector": ["onerc_vmms_migrate.import_review.ImportedDisabilityMixin"],
+    "VMMS Volunteer": ["onerc_vmms_migrate.import_review.ImportedAnchorMixin"],
+    "VMMS Membership": ["onerc_vmms_migrate.import_review.ImportedAnchorMixin"],
+    "VMMS Approval Decision": ["onerc_vmms_migrate.import_review.ImportedDecisionMixin"],
+    "VMMS Emergency Contact": ["onerc_vmms_migrate.import_review.ImportedContactMixin"],
+    "VMMS Education": ["onerc_vmms_migrate.import_review.ImportedEducationMixin"],
+    "VMMS Volunteer Application": ["onerc_vmms_migrate.import_review.ImportedOrphanApplicationMixin"],
     "User": ["onerc_vmms_migrate.import_review.ImportedNamesMixin"],
 }
 
@@ -295,3 +302,13 @@ require_type_annotated_api_methods = True
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
+
+before_job = ["onerc_vmms_migrate.silence.before_work"]
+after_job = ["onerc_vmms_migrate.silence.after_work"]
+before_request = ["onerc_vmms_migrate.silence.before_work"]
+after_request = ["onerc_vmms_migrate.silence.after_work"]
+
+# Only provenance-backed profile child rows can retain missing legacy values.
+for child in ("VMMS Education", "VMMS Declared Training", "VMMS Declared Certification", "VMMS Work Experience",
+              "VMMS Professional Reference", "Personnel Licence", "VMMS Driving Licence", "VMMS Supporting Document"):
+    extend_doctype_class.setdefault(child, []).append("onerc_vmms_migrate.import_review.ImportedProfileChildMixin")

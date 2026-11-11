@@ -68,8 +68,15 @@ USER_FIELDS = [
 	"mobile_no",
 	"phone",
 	"user_image",
+	"cover_image",
+	"twitter",
+	"headline",
+	"location",
+	"open_to",
+	"preferred_name",
 	"birth_date",
 	"creation",
+	"modified",
 	"last_login",
 	"bio",
 	*PERSON_FIELDS,
@@ -91,7 +98,10 @@ APPLICANT_FIELDS = [
 	"is_volunteer",
 	"job_title",
 	"creation",
+	"modified",
 	"has_insurance",
+	"rejection_reason",
+	"custom_remarks",
 	"place_of_work",
 	"reason_to_join_krcs",
 	"date_of_birth",
@@ -115,6 +125,10 @@ EMPLOYEE_FIELDS = [
 	"user_id",
 	"company",
 	"branch",
+	"bank_name",
+	"current_address",
+	"designation",
+	"salutation",
 	"status",
 	"date_of_joining",
 	"relieving_date",
@@ -126,10 +140,11 @@ EMPLOYEE_FIELDS = [
 	"emergency_phone_number",
 	"relation",
 	"creation",
+	"modified",
 ]
 EMPLOYEE_TABLES = ["education", "external_work_history"]
 
-MEMBER_FIELDS = ["member_name", "email_id", "volunteer", "customer", "image", "creation"]
+MEMBER_FIELDS = ["member_name", "email_id", "volunteer", "customer", "image", "creation", "modified", "customer_name"]
 MEMBERSHIP_FIELDS = [
 	"member",
 	"membership_type",
@@ -138,12 +153,15 @@ MEMBERSHIP_FIELDS = [
 	"from_date",
 	"to_date",
 	"member_since_date",
+	"qr_code",
+	"is_existing_member",
 	"paid",
 	"amount",
 	"currency",
 	"member_name",
 	"docstatus",
 	"creation",
+	"modified",
 ]
 MEMBERSHIP_TYPE_FIELDS = ["membership_type", "amount", "billing_cycle", "currency"]
 
@@ -152,6 +170,7 @@ ATTACHED_TO = ("User", "Job Applicant", "Employee", "VM Member", "VM Membership"
 
 def extract(source: Source) -> dict:
 	if hasattr(source, "data"):
+		enrich(source.data)
 		return source.data
 	users = _index(source.select("User", USER_FIELDS, "where name not in ('Administrator', 'Guest')"))
 	_attach_tables(source, "User", users, USER_TABLES)
@@ -269,3 +288,27 @@ def _missing_columns(source: Source) -> dict[str, list[str]]:
 		if absent:
 			missing[doctype] = absent
 	return missing
+
+
+def enrich(snapshot):
+    """Recover captured person columns absent from older operational allowlists.
+
+    Use only the captured full-history records; no fresh source query and no
+    overwrite of a value explicitly supplied by the original operational export.
+    """
+    if snapshot.get('_people_enriched'):return snapshot
+    snapshot['_people_original']={group:{name:dict(row) for name,row in snapshot.get(group,{}).items()}
+        for group in ('users','employees','applicants','members','memberships')}
+    store=snapshot.get('history',{})
+    for group,dt in (('users','User'),('employees','Employee'),('applicants','Job Applicant'),
+                     ('members','VM Member'),('memberships','VM Membership')):
+        wanted=set({'User':USER_FIELDS,'Employee':EMPLOYEE_FIELDS,'Job Applicant':APPLICANT_FIELDS,
+            'VM Member':MEMBER_FIELDS,'VM Membership':MEMBERSHIP_FIELDS}[dt])
+        candidates=store.rows(dt) if hasattr(store,'rows') else (item['record'] for item in store.values() if item['doctype']==dt)
+        for original in candidates:
+            row=snapshot.get(group,{}).get(original['name'])
+            if row is None:continue
+            for field,value in original.items():
+                if field in wanted and field not in row:row[field]=value
+    snapshot['_people_enriched']=True
+    return snapshot

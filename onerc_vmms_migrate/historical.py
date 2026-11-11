@@ -15,7 +15,7 @@ from frappe.utils import now_datetime
 from onerc_vmms_migrate.history_model import archive_users, canonical, key
 
 ARCHIVE = 'Legacy VMMS Document'
-ALLOWED = {'VMMS Membership', 'VMMS Volunteer Application', 'VMMS Terms of Reference',
+ALLOWED = {'Version', 'VMMS Membership', 'VMMS Volunteer Application', 'VMMS Terms of Reference',
            'VMMS Deployment', 'VMMS Deployment Request', 'VMMS Deployment Assignment',
            'VMMS Availability Schedule', 'VMMS Certification', 'VMMS Time Log',
            'VMMS Task', 'VMMS Event Attendance', 'Project', 'Task', 'Event',
@@ -46,7 +46,7 @@ def insert(doctype, values, name=None, *, owner=None):
     doc.owner = owner or 'Administrator'
     doc.creation = values.get('creation') or now_datetime()
     doc.modified = values.get('modified') or doc.creation
-    doc.modified_by = 'Administrator'
+    doc.modified_by = values.get('modified_by') or 'Administrator'
     doc.docstatus = int(values.get('docstatus') or 0)
     doc.flags.in_insert = True
     # Cancelled historical dependencies remain valid *references*. Enforce

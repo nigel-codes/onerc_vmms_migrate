@@ -111,7 +111,7 @@ class TestNativeChildMappings(TestCase):
 				{"type": "Other", "document_name": "Original reference"},
 			],
 		)
-		self.assertEqual(profile.get("vmms_additional_skills"), [{"additional_skill": "Recorded skill"}])
+		self.assertNotIn("vmms_additional_skills", profile)
 		self.assertEqual(profile.get("vmms_allergies"), [{"allergy": "Recorded allergy"}])
 		self.assertIn(
 			{
@@ -133,13 +133,13 @@ class TestNativeChildMappings(TestCase):
 
 	def test_meaningful_education_without_school_is_reported(self):
 		bundle = self.build(education=[{"qualification": "Recorded qualification without school"}])
-		self.assertTrue(any("education" in error and "institution" in error for error in bundle["errors"]))
+		self.assertTrue(any("institution" in row["field"] for row in bundle["_review_values"]))
+		self.assertEqual(bundle["profile"]["vmms_education"][0]["qualification"],"Recorded qualification without school")
 
 	def test_loader_accepts_every_native_child_destination(self):
 		for field in [
 			"vmms_certifications",
 			"vmms_supporting_documents",
-			"vmms_additional_skills",
 			"vmms_allergies",
 		]:
 			self.assertIn(field, load.PROFILE_TABLES)

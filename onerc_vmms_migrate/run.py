@@ -547,12 +547,11 @@ def reconcile(bundles=None):
 				["membership_status", "membership_type", "geo_node", "valid_from", "valid_to"],
 				as_dict=True,
 			)
-			lifetime = frappe.db.get_value("VMMS Membership Type", m["membership_type"], "is_lifetime")
 			compare(f"{m['source_name']}.status", m["membership_status"], actual.membership_status)
 			compare(f"{m['source_name']}.type", m["membership_type"], actual.membership_type)
 			compare(f"{m['source_name']}.geo_node", m["geo_node"], actual.geo_node)
 			compare(f"{m['source_name']}.valid_from", m["valid_from"], actual.valid_from)
-			compare(f"{m['source_name']}.valid_to", None if lifetime else m["valid_to"], actual.valid_to)
+			compare(f"{m['source_name']}.valid_to", m["valid_to"], actual.valid_to)
 
 	counts = {
 		"people_checked": checked,

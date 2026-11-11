@@ -4,7 +4,18 @@ import frappe
 
 def after_install():
     from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
-    create_custom_fields({'VMMS Professional Reference':[
+    create_custom_fields({'VMMS Approval Decision':[
+        {'fieldname':'legacy_source_decision','fieldtype':'Check','label':'Imported source decision','read_only':1},
+    ],'VMMS Membership':[
+        {'fieldname':name,'fieldtype':kind,'label':label,'read_only':1}
+        for name,kind,label in (('legacy_status','Data','Original membership status'),
+            ('legacy_paid','Check','Original paid flag'),
+            ('legacy_is_existing_member','Check','Original existing member flag'),
+            ('legacy_qr_code','Small Text','Original QR code'))
+    ],'VMMS Volunteer Application':[
+        {'fieldname':'created_by_migration','fieldtype':'Check','label':'Created by migration','read_only':1},
+        {'fieldname':'legacy_orphan_application','fieldtype':'Check','label':'Imported without source volunteer','read_only':1},
+    ],'VMMS Professional Reference':[
         {'fieldname':'legacy_email','fieldtype':'Small Text','label':'Legacy email requiring review',
          'read_only':1,'insert_after':'email'},
     ],'VMMS Education':[
@@ -45,5 +56,11 @@ def after_install():
          'read_only':1,'insert_after':'legacy_unclaimed_booking'},
     ]},update=True)
 
+    if frappe.db.get_single_value('VMMS Migration Settings','import_with_review') is None:
+        frappe.db.set_single_value('VMMS Migration Settings','import_with_review',1)
+        frappe.db.set_single_value('VMMS Migration Settings','drop_invalid_phones',1)
     if frappe.db.get_single_value('VMMS Migration Settings','restore_email_link_login') is None:
         frappe.db.set_single_value('VMMS Migration Settings','restore_email_link_login',1)
+
+    from onerc_vmms_migrate.membership_import import install_status
+    install_status()

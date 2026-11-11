@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.4 — 2026-11-11
+
+- Restore the captured source password for the explicitly approved existing-login conflict during its people retry. Approval is restricted to the destination/source/capture/session/login combination; all other credential conflicts retain the existing refusal. Roles and enabled state of adopted accounts are preserved.
+- Commit credential restoration, Activity Log audit and person ledger together. Session cleanup runs after commit and checks that its audit survived a person savepoint rollback. Reports include successful restorations without credential material.
+- Add a default-on automatic-continuation option to Resume / retry batches, with strict boolean serialization, so a repaired people page can continue the remaining run.
+
 ## 0.7.3 — 2026-11-11
 
 - Create a missing County Coordinator Role Profile from the destination's existing, enabled County Coordinator role. Require native leadership-role setup if that role is absent; existing profiles are checked and never silently broadened.

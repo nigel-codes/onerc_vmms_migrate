@@ -44,5 +44,13 @@ const frm = {is_dirty: () => false, get_field: () => ({$wrapper: {html() {}}}),
  await dialog.primary_action({backup_confirmed: 1, confirmation: 'REPAIR DATES'});
  assert.equal(requests.at(-1).backup_confirmed, true);
  assert.equal(requests.at(-1).plan_digest, 'dates-reviewed');
+ buttons.get('Resume / retry batches')();
+ assert.ok(dialog.fields.some(field => field.fieldname === 'auto_continue' && field.default === 1));
+ for (const checked of [1, true, 0, false, undefined, '1', 'false']) {
+  await dialog.primary_action({batch_size: 1000, accept_changes: checked, auto_continue: checked});
+  const request = requests.at(-1);
+  assert.equal(request.accept_changes, checked === 1 || checked === true);
+  assert.equal(request.auto_continue, checked === 1 || checked === true);
+ }
  console.log('PASS: attachment dialog serializes checked numeric controls as strict booleans.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

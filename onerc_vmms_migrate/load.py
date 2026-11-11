@@ -162,6 +162,7 @@ def load_bundle(bundle: dict, source, conf, run_id: str, dry_run: bool = False) 
 		"warnings": ctx["warnings"],
 		"phone_review": ctx.get("phone_review", []),
 		"review_values": bundle.get("_review_values", []),
+		"password_restorations": ctx.get("password_restorations", []),
 	}
 
 
@@ -209,10 +210,12 @@ def _user(ctx) -> str | None:
 
 			rows = frappe.db.sql("SELECT password FROM __Auth WHERE doctype='User' AND name=%s AND fieldname='password' AND encrypted=0", (email,))
 			if not rows or not hmac.compare_digest(str(rows[0][0]), login["password_hash"]):
-				raise ValueError("An existing target login has a different password credential. Resolve the account conflict before migration; its password was not changed.")
-		# Somebody already signed up on the new site, or it is a staff account
-		# made by hand. Linked, never altered: not the password, not the roles.
-		ctx["warnings"].append(f"login {email} already existed on this site; linked, not changed")
+				from onerc_vmms_migrate.login_restoration import restore_approved
+				if not restore_approved(ctx, login):
+					raise ValueError("An existing target login has a different password credential. Resolve the account conflict before migration; its password was not changed.")
+		# Adopt without changing roles or enabled state. A credential mismatch
+		# is allowed only by the explicit account restoration above.
+		ctx["warnings"].append(f"login {email} already existed; adopted with its roles and enabled state kept")
 		_ledger(ctx, "User", login["source_name"], "User", email, "adopted")
 		return email
 

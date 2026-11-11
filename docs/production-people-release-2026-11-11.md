@@ -206,3 +206,50 @@ portal roles and unchanged adopted accounts. The old implementation failed these
 cases before the correction. All 354 Python unit tests and the focused undefined-
 name checks pass. Inverting the additional-role retention branch makes its
 regression tests fail. No production database was queried in this fix.
+
+## 0.7.4 follow-up — explicitly approved existing-login password restoration
+
+Batch 77 reported one existing destination login with a credential hash different
+from its captured source credential. The operator explicitly selected restoring
+the old site's password for that account, then requested app deployment instead
+of a bench-console repair. No broader existing-account overwrite was approved.
+
+The new login_restoration module stores one approval digest. Its input is the
+ordered JSON array of destination site, source ID, capture ID, migration session,
+source login and target login. This binds the approval to the existing production
+run without storing the account's address or password material in the release
+policy. The private batch failure report and migration session identify the
+approved account. Additional approvals require a new explicit operator decision.
+
+The loader invokes restoration only on an existing credential mismatch during a
+trusted people import. It verifies the approved tuple, current people phase/run,
+protected source/capture identity and exact hash from the recipient-verified
+login bundle. Unapproved collisions retain the original refusal. Captures,
+mapping files and configuration are unchanged. Existing account roles and enabled
+state are preserved; the account remains adopted through the normal ledger path.
+
+Restoration writes only that account's local password credential, an Activity Log
+audit and a private per-page password_restorations summary. It does not commit
+inside the person loader: a later person failure rolls back credential, audit and
+ledger together. An after-commit callback expires the account's other sessions.
+It first checks for the committed audit row because Frappe can retain callbacks
+after rollback to a person savepoint. A session-cleanup outage is recorded for
+review without reclassifying the committed people page as a failed import.
+
+Deployment itself performs no password change. After deploying receiver 0.7.4,
+hard-refresh Migration Settings and use Resume / retry batches at size 1000.
+Check the reviewed-code checkbox and leave Continue automatically after this
+retry enabled. The original checkpoint is resumed and completed people are
+skipped by ledger. The approved source password is restored when the failed
+person is retried; subsequent people/file/account/Version jobs queue normally.
+Keep the capture, mappings and configuration unchanged. No terminal, recapture,
+lookup regeneration or initial-import restart is needed.
+
+Verification: 364 Python unit tests pass. The focused regression first reproduced
+the actual credential-conflict exception, then passed with restoration. Coverage
+includes approval isolation, protected-hash equality, adoption/role preservation,
+no early commit, redacted audit/report payloads, deferred session cleanup,
+savepoint rollback and cleanup failures. The browser-dialog test verifies both
+review and auto-continue controls serialize as JSON booleans. JavaScript syntax
+and focused undefined-name checks pass. No production repair was executed from
+the local workspace and no VMMSX/onerc_vmms/onerc_core source was changed.

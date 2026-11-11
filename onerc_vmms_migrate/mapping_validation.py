@@ -3,11 +3,12 @@
 from urllib.parse import urlsplit
 
 from onerc_vmms_migrate import normalise
+from onerc_vmms_migrate.import_review import NAME_FIELDS, PROFILE_CHILD_DOCTYPES
 
 EMPTY = (None, "", [])
 
 
-def profile_issues(profile, schemas, lookups, *, files=(), phone_check=None):
+def profile_issues(profile, schemas, lookups, *, files=(), phone_check=None, import_with_review=False):
 	issues = []
 	indexes = {
 		dt: rows if isinstance(rows, dict) else {str(r["name"]): r for r in rows}
@@ -17,7 +18,7 @@ def profile_issues(profile, schemas, lookups, *, files=(), phone_check=None):
 	def issue(field, code, severity="error", **details):
 		issues.append({"field": field, "code": code, "severity": severity, **details})
 
-	def walk(doctype, values, path):
+	def walk(doctype, values, path, parenttype=None):
 		fields = schemas.get(doctype)
 		if fields is None:
 			issue(path, "missing_target_doctype", target_doctype=doctype)
@@ -36,7 +37,7 @@ def profile_issues(profile, schemas, lookups, *, files=(), phone_check=None):
 			kind, options = meta["fieldtype"], meta.get("options")
 			if kind in ("Table", "Table MultiSelect"):
 				for index, row in enumerate(value, 1):
-					walk(options, row, fieldpath + "[" + str(index) + "]")
+					walk(options, row, fieldpath + "[" + str(index) + "]", parenttype=doctype)
 			elif kind == "Select" and str(value) not in (options or "").splitlines():
 				issue(fieldpath, "invalid_select")
 			elif kind == "Link":
@@ -85,7 +86,13 @@ def profile_issues(profile, schemas, lookups, *, files=(), phone_check=None):
 					issue(fieldpath, "invalid_url")
 		for name, meta in fields.items():
 			if meta.get("reqd") and values.get(name) in EMPTY:
-				issue(path + "." + name, "missing_required_value")
+				# These are the exact import exceptions installed on the native
+				# controllers. They preserve unknown source facts without guessing.
+				reviewable = import_with_review and (
+					(doctype == "Red Profile" and name in NAME_FIELDS["Red Profile"])
+					or (parenttype == "Red Profile" and doctype in PROFILE_CHILD_DOCTYPES)
+				)
+				issue(path + "." + name, "missing_required_value", "review" if reviewable else "error")
 
 	walk("Red Profile", profile, "Red Profile")
 	planned = {
@@ -153,15 +160,12 @@ def installed_issues(bundles, conf=None):
 			lookups,
 			files=bundle.get("files", ()),
 			phone_check=frappe.utils.validate_phone_number,
+			import_with_review=bool((conf or {}).get("import_with_review")),
 		)
 	]
 
 	if (conf or {}).get("drop_invalid_phones"):
 		for row in rows:
 			if row["code"] == "invalid_phone":
-				row["severity"] = "review"
-	if (conf or {}).get("import_with_review"):
-		for row in rows:
-			if row["code"] == "missing_required_value" and row["field"] in ("Red Profile.first_name", "Red Profile.last_name"):
 				row["severity"] = "review"
 	return rows

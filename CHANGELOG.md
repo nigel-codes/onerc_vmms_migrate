@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1 — 2026-11-11
+
+- Align the plan with the existing imported-profile child-field exceptions. In review mode, missing education institutions are review items rather than person blockers; long original institution text remains preserved.
+- Share the native child-controller allowlist between hooks and planning. Strict mode, unrelated mandatory site fields, unknown child controllers and missing link targets retain their blocking checks.
+- Add regression coverage for the reported education-row failure; 333 Python unit tests pass.
+
 ## 0.7.0 — 2026-11-11
 
 - Add a production people workflow with a first-page pause, continuous resume, durable file checkpoints and original Version history after people. No rehearsal or source freeze is required for this workflow.

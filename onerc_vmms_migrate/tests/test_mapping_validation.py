@@ -173,3 +173,82 @@ class TestInstalledRequiredFields(TestCase):
 				for row in issues
 			)
 		)
+
+
+class TestImportedEducationReview(TestCase):
+	def installed(self, profile, *, review):
+		from types import SimpleNamespace
+		from unittest.mock import MagicMock, patch
+		import frappe
+		from onerc_vmms_migrate.mapping_validation import installed_issues
+
+		definitions = {
+			"Red Profile": [
+				frappe._dict(fieldname="email", fieldtype="Data", reqd=1),
+				frappe._dict(fieldname="data_review_values", fieldtype="Code"),
+				frappe._dict(fieldname="site_required_fact", fieldtype="Data", reqd=1),
+				frappe._dict(fieldname="vmms_education", fieldtype="Table", options="VMMS Education"),
+			],
+			"VMMS Education": [
+				frappe._dict(fieldname="institution", fieldtype="Data", reqd=1),
+				frappe._dict(fieldname="legacy_institution", fieldtype="Small Text"),
+				frappe._dict(fieldname="qualification", fieldtype="Data"),
+			],
+		}
+		with (
+			patch.object(frappe, "db", MagicMock()),
+			patch.object(frappe, "get_meta", side_effect=lambda name: SimpleNamespace(fields=definitions[name])),
+		):
+			return installed_issues([{"key": "person@example.test", "profile": profile}], {"import_with_review": review})
+
+	def test_long_institution_keeps_original_and_the_person_is_eligible_with_review(self):
+		import json
+		from copy import deepcopy
+		from onerc_vmms_migrate.transform import _education_limits
+		from onerc_vmms_migrate.import_review import finalise
+
+		original = "Recorded institution, department and campus. " * 5
+		bundle = {"profile": {"email": "person@example.test", "site_required_fact": "Recorded"}, "warnings": []}
+		bundle["profile"]["vmms_education"] = [_education_limits(bundle, {
+			"institution": original, "qualification": "Recorded award"
+		})]
+		finalise(bundle)
+		before = deepcopy(bundle["profile"])
+		issues = self.installed(bundle["profile"], review=True)
+		self.assertEqual(issues, [{
+			"person": "person@example.test", "field": "Red Profile.vmms_education[1].institution",
+			"code": "missing_required_value", "severity": "review",
+		}])
+		self.assertEqual(bundle["profile"], before)
+		self.assertEqual(bundle["profile"]["vmms_education"][0]["legacy_institution"], original)
+		self.assertEqual(json.loads(bundle["profile"]["data_review_values"])[0]["original_value"], original)
+
+	def test_unknown_institution_is_reviewed_without_inventing_a_school(self):
+		profile = {"email": "person@example.test", "site_required_fact": "Recorded",
+			"vmms_education": [{"institution": None, "qualification": "Original qualification"}]}
+		issues = self.installed(profile, review=True)
+		self.assertEqual(issues[0]["severity"], "review")
+		self.assertIsNone(profile["vmms_education"][0]["institution"])
+
+	def test_strict_mode_and_unrelated_required_site_fields_stay_blocking(self):
+		profile = {"email": "person@example.test", "vmms_education": [{"institution": None}]}
+		strict = self.installed(profile, review=False)
+		self.assertTrue(all(row["severity"] == "error" for row in strict))
+		review = self.installed(profile, review=True)
+		by_field = {row["field"]: row["severity"] for row in review}
+		self.assertEqual(by_field["Red Profile.vmms_education[1].institution"], "review")
+		self.assertEqual(by_field["Red Profile.site_required_fact"], "error")
+
+	def test_review_exceptions_do_not_cover_unknown_child_controllers_or_bad_links(self):
+		from onerc_vmms_migrate.mapping_validation import profile_issues
+		unknown_schema = {
+			"Red Profile": {"custom_rows": {"fieldtype": "Table", "options": "Unregistered Child"}},
+			"Unregistered Child": {"required_fact": {"fieldtype": "Data", "reqd": 1}},
+		}
+		issues = profile_issues({"custom_rows": [{}]}, unknown_schema, {}, import_with_review=True)
+		self.assertEqual(issues[0]["severity"], "error")
+		issues = profile_issues({"vmms_education": [{"institution": None, "level": "absent"}]},
+			SCHEMA, LOOKUPS, import_with_review=True)
+		self.assertEqual({row["code"]: row["severity"] for row in issues}, {
+			"missing_required_value": "review", "missing_link_target": "error"
+		})

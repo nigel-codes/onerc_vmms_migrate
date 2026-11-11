@@ -309,6 +309,7 @@ before_request = ["onerc_vmms_migrate.silence.before_work"]
 after_request = ["onerc_vmms_migrate.silence.after_work"]
 
 # Only provenance-backed profile child rows can retain missing legacy values.
-for child in ("VMMS Education", "VMMS Declared Training", "VMMS Declared Certification", "VMMS Work Experience",
-              "VMMS Professional Reference", "Personnel Licence", "VMMS Driving Licence", "VMMS Supporting Document"):
+from onerc_vmms_migrate.import_review import PROFILE_CHILD_DOCTYPES as _PROFILE_CHILD_DOCTYPES
+
+for child in _PROFILE_CHILD_DOCTYPES:
     extend_doctype_class.setdefault(child, []).append("onerc_vmms_migrate.import_review.ImportedProfileChildMixin")

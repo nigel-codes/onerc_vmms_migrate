@@ -5,6 +5,11 @@ from copy import deepcopy
 
 NAME_FIELDS = {"Red Profile": ("first_name", "last_name"), "User": ("first_name",)}
 REVIEW_FIELD = "data_review_values"
+# Keep preflight's review policy and the installed child mixins in step.
+PROFILE_CHILD_DOCTYPES = (
+    "VMMS Education", "VMMS Declared Training", "VMMS Declared Certification", "VMMS Work Experience",
+    "VMMS Professional Reference", "Personnel Licence", "VMMS Driving Licence", "VMMS Supporting Document",
+)
 
 
 def record(bundle, field, value, reason, action="left blank for correction"):

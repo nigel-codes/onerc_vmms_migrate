@@ -102,3 +102,19 @@ business results are the operator's next checks, not completed site tests.
 syntax check passed. Changed Python files passed undefined-name/local-variable
 checks. Deliberately removing the first-page pause caused its regression test to
 fail, then the source was restored. No site rehearsal or production call was run.
+
+
+## 0.7.1 follow-up — education institution preflight
+
+The production plan exposed one `missing_required_value` on an education
+institution. The imported-child loader already supports retaining this blank
+under the approved review policy, including full long institution text in
+`legacy_institution` and the original-value report. The planner had not applied
+that exception. It now shares the installed child-controller allowlist and
+reports the field as review when Import people with field review is enabled.
+Invalid link targets and unrelated mandatory fields remain errors.
+
+Deploy receiver 0.7.1, keep the selected capture and saved mappings, and run Plan
+migration again. No new capture, lookup preparation or rehearsal is required for
+this fix. The full Python unit suite passes 333 tests; no production call or
+native app source change was made.

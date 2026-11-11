@@ -105,14 +105,35 @@ def resume_locked(size, accept_changes, token, auto_continue=False):
 		frappe.throw("There is no unfinished batch session to resume.")
 	current = browser.fingerprint()
 	if current != value["fingerprint"]:
-		# Trial work is not a cutover approval. Record every reviewed code or
-		# mapping revision; never silently bless new inputs for a live import.
-		if value["mode"] != "test" or not accept_changes:
-			frappe.throw(
-				"Code, capture, settings or mappings changed. A test session needs explicit review; live imports cannot change inputs midway."
+		if value.get("scope") == "people" and value["mode"] == "import":
+			if not accept_changes:
+				frappe.throw(
+					"Receiver code changed. Review the deployment, then use Resume / retry batches with the reviewed-code checkbox."
+				)
+			from onerc_vmms_migrate.code_resume import approve_people_code_update
+
+			try:
+				proof = approve_people_code_update(value)
+			except ValueError as exc:
+				frappe.throw(str(exc))
+			value["inputs_fingerprint"] = proof["inputs_fingerprint"]
+			value.setdefault("code_upgrades", []).append(
+				{
+					**proof,
+					"from_fingerprint": value["fingerprint"],
+					"to_fingerprint": current,
+					"reviewed_by": frappe.session.user,
+					"reviewed_on": str(frappe.utils.now_datetime()),
+				}
 			)
-		if workspace.config().get("browser_capture") != value["capture_id"]:
-			frappe.throw("The selected capture changed. Restore the original capture before resuming.")
+		else:
+			# Existing persistent-test/full-import rules stay independent of the people release.
+			if value["mode"] != "test" or not accept_changes:
+				frappe.throw(
+					"Code, capture, settings or mappings changed. A test session needs explicit review; live full imports cannot change inputs midway."
+				)
+			if workspace.config().get("browser_capture") != value["capture_id"]:
+				frappe.throw("The selected capture changed. Restore the original capture before resuming.")
 		value.setdefault("versions_reviewed", []).append(value["fingerprint"])
 		value["fingerprint"] = current
 		value["passed"] = False
@@ -187,8 +208,10 @@ def initialize(action, size, conf, source):
 	if action == "people_import":
 		from onerc_vmms_migrate.people_run import check_source
 		previous=frappe.db.get_single_value(batches.DOCTYPE,"people_source_id")
-		value.update(scope="people",people_offset=0,auto_continue=False,
-			source_id=check_source(previous,source.data))
+		value.update(
+			scope="people", people_offset=0, auto_continue=False,
+			inputs_fingerprint=browser.fingerprint(False), source_id=check_source(previous, source.data),
+		)
 		frappe.db.set_single_value(batches.DOCTYPE,"people_source_id",value["source_id"])
 		frappe.db.set_single_value("VMMS Migration Settings","people_import_active",1)
 	batches.commit_checkpoint(value)

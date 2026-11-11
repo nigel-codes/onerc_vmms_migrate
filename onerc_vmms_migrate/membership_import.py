@@ -34,3 +34,40 @@ def install_status():
 			"Text",
 			validate_fields_for_doctype=False,
 		)
+
+
+class HistoricalMembershipMixin:
+	def _get_missing_mandatory_fields(self):
+		missing = super()._get_missing_mandatory_fields()
+		if not any(row[0] == "membership_source" for row in missing):
+			return missing
+		if not self.get("legacy_membership_id") or self.get("accounting_status") != ACCOUNTING_STATUS:
+			return missing
+		import frappe
+
+		trusted = bool(frappe.flags.vmms_migration_import)
+		if not trusted and not self.is_new():
+			stored = frappe.db.get_value(
+				self.doctype,
+				self.name,
+				["membership_source", "legacy_membership_id", "accounting_status"],
+				as_dict=True,
+			)
+			trusted = bool(
+				stored
+				and not stored.get("membership_source")
+				and stored.get("legacy_membership_id") == self.get("legacy_membership_id")
+				and stored.get("accounting_status") == ACCOUNTING_STATUS
+				and frappe.db.exists(
+					"Legacy Migration Record",
+					{
+						"source_doctype": "VM Membership",
+						"target_doctype": self.doctype,
+						"target_name": self.name,
+						"outcome": "created",
+					},
+				)
+			)
+		# Blank means no modern gateway/proof claim was recorded. Accounting's
+		# Historical marker independently excludes the original fee from posting.
+		return [row for row in missing if row[0] != "membership_source"] if trusted else missing

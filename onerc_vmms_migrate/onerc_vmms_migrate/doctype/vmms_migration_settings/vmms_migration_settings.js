@@ -85,10 +85,10 @@ frappe.ui.form.on('VMMS Migration Settings', {
    const dialog = new frappe.ui.Dialog({title: __('Resume saved batch checkpoint'), fields: [
     {fieldtype: 'HTML', options: '<p>Completed batches remain in the destination. The last unfinished batch is retried using the migration ledger to avoid duplicates. Fix the reported errors first. A running job will not be interrupted.</p>'},
     {fieldname: 'batch_size', fieldtype: 'Int', label: __('Records per batch (1–1000)'), default: 1000, reqd: 1},
-    {fieldname: 'accept_changes', fieldtype: 'Check', label: __('Test only: I reviewed code/settings/mapping changes since the previous batch'), description: __('A changed capture is always refused. Existing migrated values are never silently overwritten. Live imports must keep their original inputs.')}
+    {fieldname: 'accept_changes', fieldtype: 'Check', label: __('I reviewed the deployed migration code update'), description: __('People imports verify the same capture, settings, mappings and placeholder assignments before accepting code changes. Completed records remain intact. Test sessions may also accept reviewed settings changes.')}
    ], primary_action_label: __('Resume'), primary_action: async values => {
     if (frm.is_dirty()) { frappe.msgprint(__('Save your settings first.')); return; }
-    await migration_json('onerc_vmms_migrate.batch_browser.resume', values);
+    await migration_json('onerc_vmms_migrate.batch_browser.resume', {...values, accept_changes: values.accept_changes === 1 || values.accept_changes === true});
     dialog.hide(); migration_status(frm);
    }}); dialog.show();
   }, __('3. Validate'));

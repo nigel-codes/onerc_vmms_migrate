@@ -16,7 +16,7 @@ extend_doctype_class = {
     "Red Profile": ["onerc_vmms_migrate.import_review.ImportedNamesMixin", "onerc_vmms_migrate.import_review.ImportedDatesMixin"],
     "VMMS Disability Selector": ["onerc_vmms_migrate.import_review.ImportedDisabilityMixin"],
     "VMMS Volunteer": ["onerc_vmms_migrate.import_review.ImportedAnchorMixin"],
-    "VMMS Membership": ["onerc_vmms_migrate.import_review.ImportedAnchorMixin"],
+    "VMMS Membership": ["onerc_vmms_migrate.import_review.ImportedAnchorMixin", "onerc_vmms_migrate.membership_import.HistoricalMembershipMixin"],
     "VMMS Approval Decision": ["onerc_vmms_migrate.import_review.ImportedDecisionMixin"],
     "VMMS Emergency Contact": ["onerc_vmms_migrate.import_review.ImportedContactMixin"],
     "VMMS Education": ["onerc_vmms_migrate.import_review.ImportedEducationMixin"],

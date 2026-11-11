@@ -77,7 +77,7 @@ def save_state(value):
 	os.replace(temporary, path)
 
 
-def fingerprint(include_code=True):
+def _input_digest():
 	conf = dict(workspace.config())
 	digest = hashlib.sha256(json.dumps(conf, sort_keys=True, default=str).encode())
 	registry = os.path.join(os.path.dirname(workspace.crosswalk_dir()), "placeholder-emails.json")
@@ -89,6 +89,11 @@ def fingerprint(include_code=True):
 		if os.path.isfile(path):
 			with open(path, "rb") as handle:
 				digest.update(handle.read())
+	return digest
+
+
+def fingerprint(include_code=True):
+	digest = _input_digest()
 	if not include_code:
 		return digest.hexdigest()
 	# A code/schema update invalidates a previous rehearsal too.

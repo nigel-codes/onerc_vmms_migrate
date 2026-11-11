@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 — 2026-11-11
+
+- Permit a blank modern payment Source only on marked historical memberships during trusted import, or on proven imported rows whose Source was already blank. Native mandatory fields remain enforced for ordinary registrations and other required values; Historical accounting exclusion is retained.
+- Resume a blocked people session after a reviewed receiver update only when its capture, settings, mappings and placeholder assignments match. Older 0.7.1 sessions are verified against a checked-in, non-executable source-code baseline; new sessions pin inputs separately. Record code-upgrade approvals without resetting the session or cursor.
+- Correct the resume checkbox wording and send its value as a JSON boolean. Retry uses existing person ledgers to keep committed successes.
+
 ## 0.7.1 — 2026-11-11
 
 - Align the plan with the existing imported-profile child-field exceptions. In review mode, missing education institutions are review items rather than person blockers; long original institution text remains preserved.

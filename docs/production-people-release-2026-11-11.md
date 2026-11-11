@@ -160,3 +160,49 @@ validation, a 46-existing/four-missing retry, and legacy code-only resume with
 changed mapping/configuration/placeholder rejection. Browser-dialog units and
 Settings JavaScript syntax checks pass. These are local code tests; the hosted
 batch facts above come from the operator's downloaded CSV/JSON reports.
+
+## 0.7.3 follow-up — County Coordinator role profiles
+
+The downloaded batch-000016-people-failures.csv contains one failure: the
+destination County Coordinator Role Profile is absent. Kenya's native VMMS Site
+Setup installs the Role and its permissions, but does not create a Role Profile.
+The receiver previously required the additional profile to exist already.
+
+The receiver now creates that profile, containing only the existing County
+Coordinator Role, when needed. An absent or disabled native Role still requires
+the destination's Kenya leadership-role setup; no unconfigured staff role or
+permissions are invented. Existing profiles must contain the native Role and are
+left unchanged. The source apps and VMMSX/onerc_core source are untouched.
+
+The same investigation exposed a second issue: writing only deprecated
+User.role_profile_name does not assign a profile on a new Frappe user with no
+role_profiles. The receiver now uses the native child table. Frappe synchronises
+roles from assigned profiles on every save. Approved extra staff roles and
+already-derived native self-service roles therefore get their own additional
+profile bundle (shared only for the same exact role set); the base coordinator
+profile is not broadened for everyone. An existing additional bundle whose
+contents were changed is rejected. These are regular Frappe Role Profiles, not
+changes to native role permissions. Later administrative role changes should be
+made through the assigned profiles, following Frappe's normal model.
+
+For newly created people, account roles are applied after native volunteer/member
+refreshes have derived portal roles. Existing destination accounts adopted by the
+loader still retain their original account policy. Account-only imports continue
+to apply policy at creation. County-level Geo Assignments and leadership routing
+remain destination setup responsibilities; this fix does not create assignments.
+
+After deploying 0.7.3, keep capture, settings and mappings unchanged. Use Resume /
+retry batches at size 500 for the currently blocked 500-person page and tick the
+reviewed-code checkbox. Completed people in that page are skipped by ledger;
+the failed coordinator is retried. Resume pauses after the page's files. Use
+Continue people continuously after that pause. Code-only resume uses the
+independent input fingerprint pinned by 0.7.2 and keeps the original cursor.
+
+Regression coverage uses Frappe User's actual profile-to-role synchronisation
+methods without a site. It covers missing profile creation, missing/disabled
+native role rejection, incorrect existing profiles, extra-role isolation,
+additional-profile drift, repeat saves/retries, source profile detection, native
+portal roles and unchanged adopted accounts. The old implementation failed these
+cases before the correction. All 354 Python unit tests and the focused undefined-
+name checks pass. Inverting the additional-role retention branch makes its
+regression tests fail. No production database was queried in this fix.

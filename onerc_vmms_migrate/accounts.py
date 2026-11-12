@@ -58,17 +58,25 @@ def transfer(snapshot, conf, run_id, progress=None, stop=None):
             target = load._user(context)
             from onerc_vmms_migrate.historical import mark
             mark(snapshot,'User',row['name'],'User',target,run_id)
-            result['existing' if existed else 'loaded'] += 1
-            result['placeholder_accounts'] += int(placeholder)
-            result['without_password'] += int(not password)
-            # Account rows have a separate key so they never make the people
-            # loader mistake an account-only phase for a completed person.
-            if not frappe.db.exists(load.LEDGER,{'person_key':'account:'+email}):
+            # A people-first run already mapped this User. Reuse that source
+            # mapping without changing its person key, original outcome or hash.
+            # The native ledger permits one row per source/target DocType pair.
+            mapped = frappe.db.get_value(load.LEDGER, {
+                'source_doctype':'User', 'source_name':row['name'], 'target_doctype':'User',
+            }, ['name', 'target_name'], as_dict=True)
+            if mapped and mapped.get('target_name') != target:
+                raise ValueError('The source User already maps to a different destination account; its mapping was not overwritten.')
+            if not mapped:
+                # New account-only mappings have a separate person key so they
+                # cannot make the people loader think a profile was completed.
                 frappe.get_doc({'doctype':load.LEDGER,'person_key':'account:'+email,
                     'source_doctype':'User','source_name':row['name'],'target_doctype':'User',
                     'target_name':target,'outcome':'adopted' if existed else 'created',
                     'source_hash':hashlib.sha256(canonical(row).encode()).hexdigest(),
                     'run_id':run_id}).insert(ignore_permissions=True)
+            result['existing' if existed else 'loaded'] += 1
+            result['placeholder_accounts'] += int(placeholder)
+            result['without_password'] += int(not password)
         except SilenceBreached:
             raise
         except Exception as exc:

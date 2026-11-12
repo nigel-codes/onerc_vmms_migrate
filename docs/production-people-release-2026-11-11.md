@@ -286,3 +286,44 @@ genuine registry corruption. The first three cases failed with the reported
 exception before the correction. Verification uses local fixtures, not live
 production data; the production registry was not downloaded or edited. All 368
 Python tests and focused undefined-name checks pass for this release.
+
+## 0.7.6 follow-up — reuse people-first User mappings in the accounts pass
+
+The production checkpoint reached people_offset 25772 and moved into accounts.
+The first 1000-account page reported 887 failures. The downloaded
+batch-000199-accounts-failures.csv confirms all 887 have the same error:
+"User ... is already recorded as migrated to a User."
+
+The account loader checked only for a ledger row with person_key account:<email>
+before inserting its account-phase mapping. The earlier people pass had already
+created the User mapping under the person's key. The native ledger permits only
+one mapping per source DocType/name and target DocType, so it correctly rejected
+that second insertion. The account-first self-test ordering had not covered this
+people-first sequence.
+
+Account transfer now looks up the source User/target User mapping and reuses it
+when it points to the same destination account. It leaves the person key, outcome,
+source hash and original provenance unchanged. A mapping pointing elsewhere
+remains a failure. New account-only users still receive account:<email> mappings,
+so the people loader cannot confuse an account-only row with a completed profile.
+Success counters are incremented after ledger handling, preventing failed rows
+from also appearing in the loaded/existing totals.
+
+This correction does not recreate already imported profiles, reset credentials,
+reapply roles, or loosen the ledger's duplicate validation. The existing password
+and placeholder collision checks remain in force. User adoption, archive marking
+and mapping writes retain their per-account savepoint/transaction behaviour.
+
+Deploy receiver 0.7.6 and resume the same checkpoint with batch size 1000, the
+reviewed-code checkbox selected and automatic continuation enabled. The account
+phase retries from its saved offset; earlier committed people/files/accounts and
+their mappings remain intact. No capture, mapping, registry or configuration
+change is required. Version history follows the account phase as before.
+
+Verification: 372 Python tests pass. Regression tests call the real accounts
+transfer and existing-user loader plus the native migration-ledger validator.
+They reproduced the same duplicate error before the correction and cover
+people-first mapping reuse, mixed existing/new pages, repeated transfers,
+account-only provenance and conflicting destinations. Focused undefined-name
+checks pass. Hosted evidence comes from the downloaded failure CSV; no production
+database was accessed or modified from this workspace.

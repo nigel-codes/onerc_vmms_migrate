@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.6 — 2026-11-12
+
+- Reuse an existing source User-to-User migration mapping during the account phase, including mappings created by the earlier people phase. Keep the original person key, outcome and source hash; create a separate account-only mapping only when no source mapping exists.
+- Refuse mappings pointing to a different destination account. Count loaded/existing accounts only after their mapping succeeds, so rolled-back failures are not also counted as successful.
+
 ## 0.7.5 — 2026-11-12
 
 - Resolve placeholder identities against the complete source snapshot before paging users in the people release's accounts phase. A page can otherwise omit the invalid source login that links related employee/member records and falsely report an alias shared by unlinked identities.

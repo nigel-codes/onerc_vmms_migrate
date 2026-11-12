@@ -253,3 +253,36 @@ savepoint rollback and cleanup failures. The browser-dialog test verifies both
 review and auto-continue controls serialize as JSON booleans. JavaScript syntax
 and focused undefined-name checks pass. No production repair was executed from
 the local workspace and no VMMSX/onerc_vmms/onerc_core source was changed.
+
+## 0.7.5 follow-up — complete placeholder graph before account paging
+
+The reported error "A placeholder address is assigned to unlinked identities"
+was reproduced locally with a valid registry. The people release's accounts phase
+paged snapshot.users before preparing placeholder assignments. Account transfer
+then validated that partial snapshot against the full persistent registry. If a
+source User outside the page links missing-email employee/member records, omitting
+it splits their identity component and falsely reports conflicting alias owners.
+The full-import accounts path already prepared the full snapshot first; the
+people-only path had omitted that step.
+
+The correction prepares aliases from the complete, enriched capture before making
+the account page, and carries the resulting private identity map into transfer.
+No registry validator was relaxed. The same missingemailN addresses remain tied
+to the same source records. Repeated pages retain identical registry bytes, so
+the pinned input fingerprint remains valid. Truly unlinked records sharing an
+alias still fail before any account load or registry write. No native people,
+accounts, passwords, files or source records are changed by deployment itself.
+
+After deploying receiver 0.7.5, hard-refresh Settings and use Resume / retry
+batches, size 1000, with the reviewed-code checkbox selected and automatic
+continuation enabled. Keep the existing capture, configuration and registry.
+Resume keeps the current phase and cursor, including progress already committed
+before this account-page preparation error. Do not regenerate the registry or
+restart the people import to address this bug.
+
+Regression tests exercise the real people account-phase and alias allocator with
+an out-of-page linking User, the following invalid-login page, repeated pages and
+genuine registry corruption. The first three cases failed with the reported
+exception before the correction. Verification uses local fixtures, not live
+production data; the production registry was not downloaded or edited. All 368
+Python tests and focused undefined-name checks pass for this release.

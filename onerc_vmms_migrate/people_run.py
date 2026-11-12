@@ -246,6 +246,10 @@ def work(snapshot, source, conf, value, progress=None):
 			done += 1
 		return done, files["total"], [], {"copied": done, "total": files["total"]}
 	if phase == "accounts":
+		from onerc_vmms_migrate.placeholder_emails import prepare
+		# Alias ownership needs every source link, including users outside this
+		# page. Carry the prepared identity map into the paged account transfer.
+		prepare(snapshot, conf)
 		keys = sorted(snapshot["users"])[start : start + size]
 		part = {**snapshot, "users": {k: snapshot["users"][k] for k in keys}}
 		deadline = time.monotonic() + 240

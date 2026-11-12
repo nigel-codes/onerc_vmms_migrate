@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5 — 2026-11-12
+
+- Resolve placeholder identities against the complete source snapshot before paging users in the people release's accounts phase. A page can otherwise omit the invalid source login that links related employee/member records and falsely report an alias shared by unlinked identities.
+- Carry the prepared identity map into each account page without changing existing placeholder addresses or weakening the registry's real-conflict checks. Keep the original account cursor, committed records and pinned migration inputs.
+
 ## 0.7.4 — 2026-11-11
 
 - Restore the captured source password for the explicitly approved existing-login conflict during its people retry. Approval is restricted to the destination/source/capture/session/login combination; all other credential conflicts retain the existing refusal. Roles and enabled state of adopted accounts are preserved.

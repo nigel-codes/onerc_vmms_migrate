@@ -99,10 +99,11 @@ class TestPeopleContracts(TestCase):
 			None if isinstance(name, dict) else {"ROOT": "national", "COAST": "region"}.get(name)
 		)
 
-		def nodes(dt, filters, **kwargs):
-			return {"Kenya Red Cross Society": ["ROOT"], "Coast Region": ["COAST"]}.get(
-				filters["geo_node_name"], []
-			)
+		def nodes(dt, **kwargs):
+			return [
+				{"name":"ROOT", "geo_node_name":"Kenya Red Cross Society", "geo_level":"national", "parent_geo_node":None, "geo_code":None},
+				{"name":"COAST", "geo_node_name":"Coast Region", "geo_level":"region", "parent_geo_node":"ROOT", "geo_code":None},
+			]
 
 		mapping = MagicMock()
 		report = {"errors": []}

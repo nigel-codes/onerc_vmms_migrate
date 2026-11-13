@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.7 — 2026-11-12
+
+- Resolve explicit branch/residence mappings before creating geography. Reuse the destination's existing nodes for approved aliases, including the repaired county/subcounty mappings; report missing mapped targets instead of recreating them.
+- Match apostrophe and whitespace variants consistently. Resolve an unmapped county within its national tree even when the source omits its destination region; keep automatic subcounty matching within the resolved parent. Ambiguous matches and incompatible historical codes require review.
+- Report created/reused Geo Node counts during preparation. Existing Geo Node labels, parents, IDs, finance links and imported people are retained.
+
 ## 0.7.6 — 2026-11-12
 
 - Reuse an existing source User-to-User migration mapping during the account phase, including mappings created by the earlier people phase. Keep the original person key, outcome and source hash; create a separate account-only mapping only when no source mapping exists.

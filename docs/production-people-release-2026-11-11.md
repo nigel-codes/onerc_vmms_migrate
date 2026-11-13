@@ -1,5 +1,80 @@
 # Production people release — 0.7.0 (11 November 2026)
 
+## 0.7.8 follow-up — historical date preview for account-only logins
+
+The hosted date preview `20261113-085039-historical-date-repair-a99ae950`
+proposed 96,014 creation-timestamp repairs: 25,769 profiles, 25,731 users,
+22,257 volunteers and 22,257 volunteer applications. It proposed no joining-date
+changes. There were 8,695 unchanged records and one preserved adopted record.
+It also reported 5,484 account hash mismatch entries plus 5,484 missing-creation
+warnings; these are overlapping diagnostics, not 10,968 missing people.
+
+The preview did not call `extract.enrich`, whereas the people account worker did
+so before fingerprinting User rows. Reproducing that difference with a captured
+User/history fixture produces the exact two-warning pattern without a source
+change. The code now applies the same in-memory capture enrichment and checks
+the stored account hash against the enriched or original operational row. Dates
+come only from the exact matching representation. Genuine changes remain held,
+and failed identity checks no longer generate a synthetic missing-date warning.
+The production report alone does not prove every held account has this cause;
+review the fresh preview after deploying receiver 0.7.8.
+
+Deployment does not apply date changes. Rerun **Historical dates → Preview
+historical dates** because the previous plan's fingerprint changes. Review the
+new before/after and held reports, then use the existing reviewed date repair
+with a current database backup. This repairs dates on imported records, not
+people/account imports or source records. Keep the completed session and capture.
+
+The Analytics trend counts `creation`; the portal Overview chart uses volunteer
+`joined_on` and membership `valid_from`. Restoring source creation timestamps
+recovers source record-creation history, which can itself contain historical bulk
+entry spikes. It does not reinterpret creation as the date someone first joined.
+
+## 0.7.7 follow-up — preserve cleaned geography during Prepare
+
+The hosted people session finished and passed on 12 November. The user then ran
+the separate console geography cleanup on `kenyaredcross.jh.frappe.cloud`.
+Its downloaded finished report confirms all 22 proposed merges, one child move
+and two residence crosswalk row repairs, with no failures or further matches
+under the console detector. The checked record counts were unchanged: 22,257
+volunteers, 1,592 members, 2,735 memberships and 14,530 File rows, among others.
+Maragua and Maragwa remain separate. This is not full-site migration sign-off.
+
+The source of recurrence was `reference.geography`: it preserved CSV targets
+while separately resolving/creating the structural Company/County/Sub County
+nodes. Exact parent/name matching could recreate a county under National when
+its seeded node was under a Region, or recreate apostrophe/whitespace aliases.
+
+`reference_geography.Geography` now checks each explicit mapping before creating
+nodes or requiring reconstructed source parents. Missing mapped targets are
+errors. Unmapped counties match uniquely within the same national tree;
+automatic region/subcounty matching remains parent-scoped. Normalization covers
+apostrophe/whitespace variants and the existing regional KRCS-prefix policy.
+Wildcard/drop policies are preserved as import policies, not node identities.
+New nodes still use the native controller and finance hooks. Existing nodes are
+never relabelled/reparented/merged by Prepare. The report adds `created_nodes`
+and `reused_nodes` to `geography`.
+
+Deploy receiver **0.7.7** before running Prepare again. Deployment itself does
+not rerun Prepare, modify source data, change migration settings or restart the
+finished people session. Preserve its capture, ledgers and placeholder registry.
+Review Prepare's errors and creation count before continuing; genuinely new
+source locations may still require native inserts.
+
+Validation includes regression cases for the actual duplicate-creation path,
+approved aliases, missing targets, cross-country and subcounty scoping, ambiguous
+names, new-node retry, root/HQ/region behavior and historical-code conflicts.
+A separate in-memory replay reconstructs the 494 cleaned target nodes and source
+geography from the downloaded production mapping rows: two preparations created
+zero nodes and left the existing target nodes unchanged. This replay uses a
+simulated database adapter, not hosted native controller execution or a complete
+new source capture. Hosting must still deploy the release.
+
+Next: qualify the operational continuation (projects/tasks, TORs, deployments and
+assignments), their ownership/permissions/geography/naming and attachments; finish
+payment history; handle source changes after capture; then complete full
+reconciliation and cutover. The people-only session has not done those phases.
+
 This release changes the migration companion app only. No VMMSX/onerc_core
 source changes, deployment, site migration, rehearsal or production import were
 performed in this run. Bank names and Awards nominations are deferred. Original

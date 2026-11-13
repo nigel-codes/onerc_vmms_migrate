@@ -1,12 +1,12 @@
 """Create source vocabularies and geography without guessing identity mappings."""
 import hashlib
-import re
 
 import frappe
 
 from onerc_vmms_migrate import normalise, workspace
 from onerc_vmms_migrate.crosswalk import Crosswalks, KINDS, VOLUNTEER_STATUS_DEFAULTS
 from onerc_vmms_migrate.history_model import History
+from onerc_vmms_migrate.reference_geography import REGION_PREFIX
 
 
 def stable_key(value):
@@ -136,7 +136,7 @@ def prepare(snapshot, conf=None):
     report['project_types'] = prepare_project_types(history)
     from onerc_vmms_migrate.trees import batched_trees
     with batched_trees():
-        geography(history, map_value, report)
+        geography(history, map_value, report, crosswalks=cw)
     # Store the database's canonical document spelling, including case.
     for kind,entries in cw.entries.items():
         dt=KINDS[kind].get('doctype')
@@ -154,10 +154,9 @@ def prepare(snapshot, conf=None):
     return report
 
 
-REGION_PREFIX = re.compile(r'^KRCS\s+', re.IGNORECASE)
-
-
-def geography(history, map_value, report):
+def geography(history, map_value, report, crosswalks=None):
+    from onerc_vmms_migrate.reference_geography import Geography, label_key
+    resolver = Geography(crosswalks if crosswalks is not None else Crosswalks())
     levels = [('national',1),('region',2),('county',3),('sub_county',4)]
     for level, order in levels:
         if not frappe.db.exists('Geo Level',level):
@@ -170,12 +169,9 @@ def geography(history, map_value, report):
             # rather than adding a second region beside the seeded one.
             label = REGION_PREFIX.sub('', label).strip() or label
         code = 'vmms-' + stable_key(dt+'\0'+row['name'])
-        # Resolve seeded names before old migration codes, especially where a
-        # previous preparation created prefixed region labels.
-        matches = frappe.get_all('Geo Node',filters={'geo_node_name':label,'geo_level':level,
-            'parent_geo_node':parent or ('is','not set')},pluck='name',limit=2)
-        if len(matches)>1:raise ValueError('Ambiguous geographic siblings: '+label)
-        found=matches[0] if matches else frappe.db.get_value('Geo Node', {'geo_code':code})
+        kind, source = ('branch', row['name']) if dt == 'Company' else ('residence',
+            ('county:' if dt == 'County' else 'sub_county:') + row['name'])
+        found = resolver.existing(kind, source, label, level, parent, code)
         if not found:
             siblings=frappe.get_all('Geo Node', filters={'geo_node_name':label,
                 'parent_geo_node':parent or ('is','not set')}, pluck='name', limit=1)
@@ -185,17 +181,28 @@ def geography(history, map_value, report):
             try:
                 found=frappe.get_doc({'doctype':'Geo Node','geo_node_name':label,'geo_level':level,
                     'parent_geo_node':parent,'geo_code':code,'is_group':int(level!='sub_location')}).insert(ignore_permissions=True).name
+                resolver.register(found, label, level, parent, code)
             except Exception:
                 frappe.db.rollback(save_point='vmms_geo_node')
                 raise
         return found
     companies={r['name']:r for r in history.rows('Company')}
     company_nodes={}
-    counties={normalise.key(value) for r in history.rows('County') for value in (r['name'],r.get('county_name')) if value}
+    counties={label_key(value, 'county') for r in history.rows('County') for value in (r['name'],r.get('county_name')) if value}
     pending={name:row for name,row in companies.items() if normalise.key(name) != 'krcs - hq'}
     while pending:
         progress=False
         for name,row in list(pending.items()):
+            try:
+                mapped = resolver.mapped('branch', name)
+                if mapped:
+                    company_nodes[name] = mapped
+                    del pending[name];progress=True
+                    continue
+            except ValueError as exc:
+                report['errors'].append({'kind':'branch','value':name,'error':str(exc)})
+                del pending[name];progress=True
+                continue
             parent=row.get('parent_company')
             if parent and normalise.key(parent)=='krcs - hq' and parent not in company_nodes:
                 roots={node_name for node_name in company_nodes.values() if frappe.db.get_value('Geo Node',node_name,'geo_level')=='national'}
@@ -209,7 +216,7 @@ def geography(history, map_value, report):
                 continue
             kind=row.get('organisation_type')
             level={'Branch':'county','Region':'region','Company':'national'}.get(kind)
-            if normalise.key(name) in counties:
+            if any(label_key(value, 'county') in counties for value in (name, row.get('company_name')) if value):
                 level='county'
             elif level=='national' and parent:
                 parent_level=frappe.db.get_value('Geo Node',company_nodes[parent],'geo_level')
@@ -248,10 +255,11 @@ def geography(history, map_value, report):
         for row in history.rows(dt):
             try:
                 parent=maps.get(parent_dt,{}).get(row.get(parent_field)) if parent_dt else primary
-                # County branches and civil counties describe the same county only
-                # on an exact, unambiguous source name, never a fuzzy match.
-                found=company_nodes.get(row['name']) if dt=='County' else None
-                if found and frappe.db.get_value('Geo Node',found,'geo_level')!='county':found=None
+                # Explicit residence decisions precede inferred structural parents.
+                found=resolver.mapped('residence',field+':'+row['name'])
+                if not found and dt=='County':
+                    found=company_nodes.get(row['name'])
+                    if found and frappe.db.get_value('Geo Node',found,'geo_level')!='county':found=None
                 if not parent and not found:
                     raise ValueError('Source geographic parent is absent; map explicitly')
                 target=found or node(dt,row,row.get(label) or row['name'],level,parent)
@@ -267,4 +275,5 @@ def geography(history, map_value, report):
             if r['name'] in maps['County'] and normalise.key(company) in
             {normalise.key(r['name']),normalise.key(r.get('county_name'))}}
         if len(matches)==1:map_value('branch',company,matches.pop(),correct_own_level=True)
-    report['geography']={'companies':len(company_nodes),**{dt:len(rows) for dt,rows in maps.items()}}
+    report['geography']={'companies':len(company_nodes),**{dt:len(rows) for dt,rows in maps.items()},
+        'created_nodes':len(resolver.created), 'reused_nodes':len(resolver.reused-resolver.created)}

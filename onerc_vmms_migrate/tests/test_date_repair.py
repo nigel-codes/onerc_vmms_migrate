@@ -47,6 +47,91 @@ class TestDatePolicy(TestCase):
 
 
 class TestDateRepairPlan(TestCase):
+	def account_plan(
+		self, *, imported_enriched=True, changed=False, missing_creation=False, history_creation=False
+	):
+		import hashlib
+		from unittest.mock import patch
+
+		import frappe
+
+		from onerc_vmms_migrate import batches
+		from onerc_vmms_migrate.history_model import canonical
+
+		raw = {"name": "account@example.test", "email": "account@example.test", "enabled": 1}
+		if not missing_creation:
+			raw["creation"] = "2019-01-02 09:00:00"
+		enriched = {**raw, "bio": "Captured biography"}
+		if history_creation:
+			enriched["creation"] = "2019-01-02 09:00:00"
+		fingerprint = hashlib.sha256(canonical(enriched if imported_enriched else raw).encode()).hexdigest()
+		snapshot = {
+			"users": {raw["name"]: dict(raw)},
+			"history": {"user": {"doctype": "User", "record": {**enriched, "enabled": 0 if changed else 1}}},
+		}
+		if changed:
+			snapshot["users"][raw["name"]]["enabled"] = 0
+		link = frappe._dict(
+			name="account-ledger",
+			person_key="account:" + raw["name"],
+			source_doctype="User",
+			source_name=raw["name"],
+			target_doctype="User",
+			target_name=raw["name"],
+			source_hash=fingerprint,
+			outcome="created",
+			creation="2026-11-12 10:00:00",
+			migrated_on="2026-11-12 10:00:00",
+		)
+		native = frappe._dict(
+			name=raw["name"], creation="2026-11-12 10:00:00", modified="2026-11-12 11:00:00"
+		)
+		with (
+			patch.object(
+				frappe,
+				"get_all",
+				side_effect=lambda dt, **kw: (
+					[link] if dt == "Legacy Migration Record" else [native] if dt == "User" else []
+				),
+			),
+			patch.object(batches, "build", return_value={"bundles": []}),
+		):
+			return repair.build_plan(snapshot, {}, {"run_id": "run"})
+
+	def test_account_hash_uses_the_same_captured_enrichment_as_import(self):
+		plan = self.account_plan()
+		self.assertEqual(plan["held"], [])
+		self.assertEqual(len(plan["tasks"]), 1)
+		self.assertEqual(plan["tasks"][0]["after"], {"creation": "2019-01-02 09:00:00.000000"})
+
+	def test_older_account_raw_fingerprint_remains_supported(self):
+		plan = self.account_plan(imported_enriched=False)
+		self.assertEqual(plan["held"], [])
+		self.assertEqual(len(plan["tasks"]), 1)
+
+	def test_genuine_account_changes_are_held_once_without_a_false_missing_date(self):
+		for enriched in (True, False):
+			with self.subTest(enriched=enriched):
+				plan = self.account_plan(imported_enriched=enriched, changed=True)
+				self.assertEqual(plan["tasks"], [])
+				self.assertEqual([row["reason"] for row in plan["held"]], ["Account source hash changed"])
+
+	def test_missing_source_date_is_reported_when_identity_is_verified(self):
+		plan = self.account_plan(missing_creation=True)
+		self.assertEqual(plan["tasks"], [])
+		self.assertEqual(
+			[row["reason"] for row in plan["held"]],
+			["Source creation timestamp absent; destination creation unchanged"],
+		)
+
+	def test_raw_fingerprint_does_not_authorize_dates_only_in_another_representation(self):
+		plan = self.account_plan(imported_enriched=False, missing_creation=True, history_creation=True)
+		self.assertEqual(plan["tasks"], [])
+		self.assertEqual(
+			[row["reason"] for row in plan["held"]],
+			["Source creation timestamp absent; destination creation unchanged"],
+		)
+
 	def test_ledger_created_only_and_earliest_profile_source(self):
 		from unittest.mock import patch
 

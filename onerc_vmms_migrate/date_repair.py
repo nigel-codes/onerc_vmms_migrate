@@ -74,8 +74,11 @@ def build_plan(snapshot, conf, proof):
 	import frappe
 
 	from onerc_vmms_migrate import batches, load
+	from onerc_vmms_migrate.extract import enrich
 	from onerc_vmms_migrate.history_model import History, canonical
 
+	# People/account workers enrich from the same immutable capture before hashing.
+	enrich(snapshot)
 	history = History(snapshot)
 	collections = {
 		"User": "users",
@@ -131,9 +134,26 @@ def build_plan(snapshot, conf, proof):
 			bundle = bundles.get(link.person_key)
 			if str(link.person_key).startswith("account:"):
 				account = source_row(link.source_doctype, link.source_name)
-				if not account or hashlib.sha256(canonical(account).encode()).hexdigest() != link.source_hash:
+				original = (
+					snapshot.get("_people_original", {})
+					.get(collections.get(link.source_doctype, ""), {})
+					.get(str(link.source_name))
+				)
+				# Older account transfers fingerprinted the operational row. Only use
+				# dates from the exact representation whose stored fingerprint matches.
+				account = next(
+					(
+						row
+						for row in (account, original)
+						if row and hashlib.sha256(canonical(row).encode()).hexdigest() == link.source_hash
+					),
+					None,
+				)
+				if not account:
 					errors.append("Account source hash changed")
 					continue
+				rows.append(account)
+				continue
 			elif not bundle or bundle["source_hash"] != link.source_hash or bundle["errors"]:
 				errors.append("Person source hash or eligibility changed")
 				continue
@@ -156,6 +176,9 @@ def build_plan(snapshot, conf, proof):
 					joining.add(bundle[section].get("joined_on"))
 		if len(joining) > 1:
 			errors.append("Merged identities have conflicting joining dates")
+		if errors:
+			held.extend({"doctype": dt, "name": name, "reason": reason} for reason in errors)
+			continue
 		expected, issues = expected_dates(dt, rows, next(iter(joining), None))
 		if dt in JOINED and not joining:
 			expected.pop("joined_on", None)

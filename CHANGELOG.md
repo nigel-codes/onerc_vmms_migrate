@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.8 — 2026-11-13
+
+- Build historical-date previews from the same captured enrichment used during the people/account import. Verify account-only ledger hashes against the exact supported captured row representation; older raw-row hashes remain supported without borrowing unverified dates from another representation.
+- Keep genuinely changed identities held. Stop date evaluation for identities that failed verification, avoiding a second, misleading missing-creation warning caused by the skipped row. No account credentials, roles or import ledgers are rewritten.
+- Preview historical dates again after deployment; existing date plans remain bound to their original code/configuration fingerprint.
+
 ## 0.7.7 — 2026-11-12
 
 - Resolve explicit branch/residence mappings before creating geography. Reuse the destination's existing nodes for approved aliases, including the repaired county/subcounty mappings; report missing mapped targets instead of recreating them.

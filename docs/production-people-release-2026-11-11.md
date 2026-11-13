@@ -1,5 +1,35 @@
 # Production people release — 0.7.0 (11 November 2026)
 
+## 0.7.8 follow-up — historical date preview for account-only logins
+
+The hosted date preview `20261113-085039-historical-date-repair-a99ae950`
+proposed 96,014 creation-timestamp repairs: 25,769 profiles, 25,731 users,
+22,257 volunteers and 22,257 volunteer applications. It proposed no joining-date
+changes. There were 8,695 unchanged records and one preserved adopted record.
+It also reported 5,484 account hash mismatch entries plus 5,484 missing-creation
+warnings; these are overlapping diagnostics, not 10,968 missing people.
+
+The preview did not call `extract.enrich`, whereas the people account worker did
+so before fingerprinting User rows. Reproducing that difference with a captured
+User/history fixture produces the exact two-warning pattern without a source
+change. The code now applies the same in-memory capture enrichment and checks
+the stored account hash against the enriched or original operational row. Dates
+come only from the exact matching representation. Genuine changes remain held,
+and failed identity checks no longer generate a synthetic missing-date warning.
+The production report alone does not prove every held account has this cause;
+review the fresh preview after deploying receiver 0.7.8.
+
+Deployment does not apply date changes. Rerun **Historical dates → Preview
+historical dates** because the previous plan's fingerprint changes. Review the
+new before/after and held reports, then use the existing reviewed date repair
+with a current database backup. This repairs dates on imported records, not
+people/account imports or source records. Keep the completed session and capture.
+
+The Analytics trend counts `creation`; the portal Overview chart uses volunteer
+`joined_on` and membership `valid_from`. Restoring source creation timestamps
+recovers source record-creation history, which can itself contain historical bulk
+entry spikes. It does not reinterpret creation as the date someone first joined.
+
 ## 0.7.7 follow-up — preserve cleaned geography during Prepare
 
 The hosted people session finished and passed on 12 November. The user then ran

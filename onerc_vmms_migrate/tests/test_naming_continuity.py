@@ -6,6 +6,23 @@ import frappe
 
 
 class TestNamingContinuity(TestCase):
+    def test_review_only_series_and_rule_floors_do_not_write_counters(self):
+        from onerc_vmms_migrate.naming_continuity import NamingContinuity
+
+        naming = NamingContinuity({"source": {"continuity": {"naming": {
+            "series": [{"name": "PROJ-", "current": 118}],
+            "rules": [{"document_type": "Project", "prefix": "PROJ-", "prefix_digits": 4, "counter": 119}],
+        }}}}, dry_run=True)
+        meta = SimpleNamespace(autoname="naming_series:", get_field=lambda _: SimpleNamespace(
+            options="PROJ-.####", default="PROJ-.####"))
+        with patch.object(frappe, "get_meta", return_value=meta), patch.object(
+            frappe, "get_all", return_value=[{"name": "rule", "prefix": "PROJ-", "prefix_digits": 4}]
+        ), patch.object(frappe, "db", MagicMock()) as db:
+            naming.reserve("Project", "Project", ["PROJ-0093"])
+        db.sql.assert_not_called()
+        self.assertEqual(naming.report()["series_floors"], {"PROJ-": 118})
+        self.assertEqual(naming.report()["naming_rule_floors"], {"rule": 119})
+
     def test_keeps_deleted_source_numbers_and_other_years_in_the_same_series(self):
         from onerc_vmms_migrate.naming_continuity import NamingContinuity
 

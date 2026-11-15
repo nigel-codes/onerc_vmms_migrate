@@ -96,11 +96,12 @@ class NamingContinuity:
             for key, number in matches:
                 floors[key] = max(number, floors.get(key, 0))
         for key, floor in sorted(floors.items()):
-            frappe.db.sql(
-                """INSERT INTO `tabSeries` (name, current) VALUES (%s, %s)
-                   ON DUPLICATE KEY UPDATE current = GREATEST(COALESCE(current, 0), VALUES(current))""",
-                (key, floor),
-            )
+            if not self.dry_run:
+                frappe.db.sql(
+                    """INSERT INTO `tabSeries` (name, current) VALUES (%s, %s)
+                       ON DUPLICATE KEY UPDATE current = GREATEST(COALESCE(current, 0), VALUES(current))""",
+                    (key, floor),
+                )
             self.series_floors[key] = max(floor, self.series_floors.get(key, 0))
         for rule in rules:
             digits = int(rule.get("prefix_digits") or 0)
@@ -115,11 +116,12 @@ class NamingContinuity:
                       and prefix_pattern(r.get("prefix") or "") == pattern
                       and int(r.get("prefix_digits") or 0) == digits]
             floor = max(observed + floors)
-            frappe.db.sql(
-                """UPDATE `tabDocument Naming Rule` SET counter = GREATEST(COALESCE(counter, 0), %s)
-                   WHERE name = %s""",
-                (floor, rule["name"]),
-            )
+            if not self.dry_run:
+                frappe.db.sql(
+                    """UPDATE `tabDocument Naming Rule` SET counter = GREATEST(COALESCE(counter, 0), %s)
+                       WHERE name = %s""",
+                    (floor, rule["name"]),
+                )
             self.rules_floors[rule["name"]] = max(floor, self.rules_floors.get(rule["name"], 0))
 
     def report(self):

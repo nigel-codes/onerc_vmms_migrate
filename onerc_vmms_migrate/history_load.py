@@ -105,7 +105,7 @@ class Loader:
             raise ValueError('Unresolved source branch: '+str(company))
         return target
 
-    def one(self, source_dt, row, target_dt, build, name=None):
+    def one(self, source_dt, row, target_dt, build, name=None, *, validate_existing=None):
         if (source_dt,row['name']) in self.excluded_identities:
             reason = getattr(self, 'excluded_reasons', {}).get((source_dt, str(row['name']))) or PERSON_EXCLUSION+'Source identity requires review; original record retained'
             self.excluded.append({'source_doctype':source_dt,'source_name':row['name'],'reason':reason})
@@ -114,6 +114,13 @@ class Loader:
         identity = (source_dt, str(row['name']))
         old = self.converted_index.get(identity) if batched else historical.converted(self.snapshot,source_dt,row['name'])
         if old:
+            if validate_existing:
+                try:
+                    validate_existing(row, old)
+                except Exception as exc:
+                    self.failures.append({'source_doctype':source_dt,'source_name':row['name'],
+                        'target_doctype':target_dt,'error':frappe.utils.strip_html(str(exc))})
+                    return None
             if name is not None:
                 self.naming.reserve(source_dt, target_dt, [old])
             self.targets[(source_dt,row['name'])]=old
@@ -222,10 +229,72 @@ class Loader:
 
     def project_link(self, doctype, row):
         source = row.get("project")
-        project = self.target("Project", source, required=False)
-        if source and not project:
-            self.warn(doctype, row, f"Unresolved optional Project link in project: {source}")
-        return project
+        if doctype == 'Personnel Terms of Reference':
+            source = self.project_context().terms_project(row['name'])
+        elif doctype == 'Deployment Request Tool':
+            source = self.project_context().tool_project(row)
+        if source and not row.get('project'):
+            self.warn(doctype, row, 'Missing Project resolved from consistent captured deployment references: '+source)
+        return self.target("Project", source) if source else None
+
+    def project_context(self):
+        if not hasattr(self, '_project_context'):
+            from onerc_vmms_migrate.project_mapping import ProjectLinks
+            self._project_context = ProjectLinks(self.history)
+        return self._project_context
+
+    def check_terms_project(self, source_project, terms):
+        if source_project:
+            expected = self.target('Project', source_project)
+            actual = frappe.db.get_value('VMMS Terms of Reference', terms, 'project')
+            if actual != expected:
+                raise ValueError('Native TOR Project does not match recorded participation: '
+                                 +str(terms)+' expected '+str(expected)+', found '+str(actual))
+
+    def validate_project(self, row, name):
+        from vmmsx.deployment.services.project import default_company
+        document = frappe.get_doc('Project', name)
+        if document.company != default_company() or document.vmms_geo_node != self.geo(row.get('company')):
+            raise ValueError('Existing Project placement changed; review its Company/Geo mapping: '+name)
+
+    def validate_deployment(self, row, name):
+        document = frappe.get_doc('VMMS Deployment', name)
+        if row.get('terms_of_reference'):
+            offered = self.target('Personnel Terms of Reference', row['terms_of_reference'], 'VMMS Terms of Reference')
+            if document.terms_of_reference != offered:
+                raise ValueError('Existing deployment points to a different source TOR: '+name)
+        self.check_terms_project(self.project_context().tool_project(row), document.terms_of_reference)
+
+    def validate_assignment(self, row, name):
+        document = frappe.get_doc('VMMS Deployment Assignment', name)
+        volunteer = self.target('Employee', row.get('employee'), 'VMMS Volunteer')
+        if document.volunteer != volunteer:
+            raise ValueError('Existing assignment belongs to a different volunteer: '+name)
+        parent = self.target('Deployment Request Tool', row.get('deployment'), 'VMMS Deployment', required=False)
+        if parent and document.deployment != parent:
+            raise ValueError('Existing assignment points to a different deployment: '+name)
+        if not parent:
+            if not row.get('terms_of_reference'):
+                raise ValueError('Orphan assignment has no recorded source TOR: '+name)
+            derived = 'legacy-assignment-'+key('assignment',row['name'])[:24]
+            if document.deployment != derived:
+                raise ValueError('Existing assignment points to a different derived deployment: '+name)
+        if row.get('terms_of_reference'):
+            offered = self.target('Personnel Terms of Reference', row['terms_of_reference'], 'VMMS Terms of Reference')
+            if document.terms_of_reference != offered:
+                raise ValueError('Existing assignment has a different offered TOR: '+name)
+        deployment = frappe.get_doc('VMMS Deployment', document.deployment)
+        if document.geo_node != deployment.geo_node:
+            raise ValueError('Existing assignment geography differs from its deployment: '+name)
+        if not parent and deployment.terms_of_reference != document.terms_of_reference:
+            raise ValueError('Existing derived deployment has a different offered TOR: '+name)
+        if not row.get('terms_of_reference') and document.terms_of_reference != deployment.terms_of_reference:
+            raise ValueError('Existing assignment has a different inherited TOR: '+name)
+        project = self.project_context().assignment_project(row)
+        self.check_terms_project(project, deployment.terms_of_reference)
+        self.check_terms_project(project, document.terms_of_reference)
+        if document.status != assignment_state(row):
+            raise ValueError('Source/destination assignment response changed; review before updating: '+name)
 
     def project_department(self, doctype, row, company, abbreviation):
         source = normalise.text(row.get("department"))
@@ -245,7 +314,22 @@ class Loader:
         company = default_company()
         abbreviation = frappe.db.get_value("Company", company, "abbr") if company else None
         project_meta = frappe.get_meta("Project")
-        for row in self.history.rows('Project'):
+        projects = self.history.rows('Project')
+        if projects:
+            if not project_meta.has_field('vmms_geo_node'):
+                raise ValueError('VMMSX Project geography field is missing; complete destination setup first')
+            if not company or not frappe.db.exists('Company', company):
+                raise ValueError('Set the destination legal Company before importing Projects')
+            from onerc_vmms_migrate.project_mapping import numbering_conflicts
+            unsupported_names = numbering_conflicts(self.naming, (r['name'] for r in projects))
+            if unsupported_names:
+                raise ValueError('Review the destination Project numbering policy before import: '
+                                 +', '.join(unsupported_names[:5]))
+            # Reserve the fresh capture's entire range before the first insert.
+            # Existing target names may be ahead of a stale target counter.
+            self.naming.reserve('Project', 'Project',
+                [r['name'] for r in projects]+frappe.get_all('Project', pluck='name'))
+        for row in projects:
             def build(r):
                 dates = ('expected_start_date', 'expected_end_date', 'actual_start_date', 'actual_end_date')
                 values=self.copy_values('Project',r,omit=('company','cost_center','customer','sales_order','project_template','users','department',*dates))
@@ -261,7 +345,7 @@ class Loader:
                 # ERP financial accounts and customer IDs remain history; no
                 # chart of accounts is manufactured to satisfy an optional link.
                 return values
-            self.one('Project',row,'Project',build,name=row['name'])
+            self.one('Project',row,'Project',build,name=row['name'],validate_existing=self.validate_project)
         # ERP tasks are project work items; no volunteer is guessed for them.
         pending=self.history.rows('Task')
         task_meta = frappe.get_meta("Task")
@@ -344,9 +428,26 @@ class Loader:
                 return values
             self.one('Personnel Terms of Reference',row,'VMMS Terms of Reference',build)
 
+    def deployment_title(self, r, terms):
+        """The old tool's own title, as it was written.
+
+        A deployment's title is required (vmmsx, Nov 2026). Legacy titles are
+        kept as they are — two old tools may share one, and the import does not
+        run the rule that open deployments must differ. Only a tool with no
+        title is given one, the way vmmsx titles a deployment nobody named: its
+        terms and the month it starts.
+        """
+        if (r.get('title') or '').strip():
+            return r['title']
+        from vmmsx.deployment.services.deployment import default_title
+        return default_title(frappe._dict(terms_of_reference=terms, name='', geo_node=self.geo(r.get('company')),
+            planned_start=r.get('expected_start_date'),
+            start_date=normalise.date(r.get('expected_start_date'))))
+
     def deployments(self):
         for row in self.history.rows('Deployment Request Tool'):
             def build(r):
+                source_project = self.project_context().tool_project(r)
                 if r.get('terms_of_reference'):
                     terms=self.target('Personnel Terms of Reference',r['terms_of_reference'],'VMMS Terms of Reference')
                 elif r.get('tor_attachment') or r.get('tor_url'):
@@ -366,15 +467,19 @@ class Loader:
                             'notes':presentation.FILE_TERMS_NOTE},owner=self.source_owner('Deployment Request Tool', r)).name
                 else:
                     raise ValueError('Legacy deployment has neither structured terms nor an original terms document')
+                self.check_terms_project(source_project, terms)
                 coordinator=self.target('User',r.get('owner'))
-                return {'terms_of_reference':terms,'geo_node':self.geo(r.get('company')),
+                return {'title':self.deployment_title(r,terms),
+                    'terms_of_reference':terms,'geo_node':self.geo(r.get('company')),
                     'coordinator':coordinator,'status':'Planned','volunteers_required':r.get('number_of_volunteers_required'),
                     'planned_start':r.get('expected_start_date'),'planned_end':r.get('expected_end_date'),
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
                     'notes':(r.get('notes') or '')+presentation.DEPLOYMENT_SUFFIX}
-            self.one('Deployment Request Tool',row,'VMMS Deployment',build)
+            self.one('Deployment Request Tool',row,'VMMS Deployment',build,
+                     validate_existing=self.validate_deployment)
         for row in self.history.rows('Personnel Deployment Request'):
             def build(r):
+                source_project = self.project_context().assignment_project(r)
                 volunteer=self.target('Employee',r.get('employee'),'VMMS Volunteer')
                 deployment=self.target('Deployment Request Tool',r.get('deployment'),'VMMS Deployment',required=False)
                 if not deployment:
@@ -389,7 +494,10 @@ class Loader:
                         raise ValueError('Standalone assignment has no recorded deployment scope')
                     name='legacy-assignment-'+key('assignment',r['name'])[:24]
                     if not frappe.db.exists('VMMS Deployment',name):
+                        title_source = {**r, 'company': original['company'],
+                                        'title': original.get('title_of_mission')}
                         historical.insert('VMMS Deployment',{'terms_of_reference':terms,
+                            'title': self.deployment_title(title_source, terms),
                             'geo_node':self.geo(original['company']),
                             'coordinator':self.target('User',r.get('owner')),'status':'Planned',
                             'volunteers_required':1,'planned_start':r.get('expected_start_date'),
@@ -397,13 +505,17 @@ class Loader:
                             'notes':presentation.ASSIGNMENT_NOTE},name=name)
                     deployment=name
                 d=frappe.get_doc('VMMS Deployment',deployment)
-                terms=self.target('Personnel Terms of Reference',r.get('terms_of_reference'),'VMMS Terms of Reference',required=False) or d.terms_of_reference
+                terms=(self.target('Personnel Terms of Reference',r['terms_of_reference'],'VMMS Terms of Reference')
+                       if r.get('terms_of_reference') else d.terms_of_reference)
+                self.check_terms_project(source_project, d.terms_of_reference)
+                self.check_terms_project(source_project, terms)
                 return {'deployment':deployment,'volunteer':volunteer,'terms_of_reference':terms,
                     'geo_node':d.geo_node,'status':assignment_state(r),'role':'member',
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
                     'invited_on':r.get('creation'),'invited_by':self.target('User',r.get('owner'),required=False),
                     'notes':r.get('notes')}
-            self.one('Personnel Deployment Request',row,'VMMS Deployment Assignment',build)
+            self.one('Personnel Deployment Request',row,'VMMS Deployment Assignment',build,
+                     validate_existing=self.validate_assignment)
 
     def events(self):
         if self.history.rows('Buzz Event') and 'buzz' not in frappe.get_installed_apps():

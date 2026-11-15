@@ -300,6 +300,12 @@ def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
         if not terms or not frappe.db.get_value('VMMS Terms of Reference',terms,'legacy_unstructured_terms'):continue
         new_url=restore(url,'VMMS Terms of Reference',terms,True)
         if new_url:
-            frappe.db.set_value('VMMS Terms of Reference',terms,'legacy_terms_attachment',new_url,update_modified=False)
+            # The native field is the one vmmsx shows staff as the TOR document;
+            # the legacy field keeps naming the original upload.
+            values={'legacy_terms_attachment':new_url}
+            if (frappe.get_meta('VMMS Terms of Reference').has_field('tor_attachment')
+                    and not frappe.db.get_value('VMMS Terms of Reference',terms,'tor_attachment')):
+                values['tor_attachment']=new_url
+            frappe.db.set_value('VMMS Terms of Reference',terms,values,update_modified=False)
             report['native_fields_updated']+=1
     return report

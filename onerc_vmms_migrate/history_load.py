@@ -5,6 +5,7 @@ automation. Unresolvable dependencies are reported per record and retained;
 they never become fabricated approvals, attendance, payments or contracts.
 """
 import datetime
+import re
 import time
 from collections import Counter
 
@@ -114,7 +115,10 @@ class Loader:
         identity = (source_dt, str(row['name']))
         old = self.converted_index.get(identity) if batched else historical.converted(self.snapshot,source_dt,row['name'])
         if old:
-            if validate_existing:
+            validated = getattr(self, 'validated', None)
+            if validate_existing and (validated is None or identity not in validated):
+                if validated is not None:
+                    validated.add(identity)  # once per run, not on every page replay
                 try:
                     validate_existing(row, old)
                 except Exception as exc:
@@ -126,6 +130,10 @@ class Loader:
             self.targets[(source_dt,row['name'])]=old
             self.results.append({'source_doctype':source_dt,'source_name':row['name'],'target_doctype':target_dt,'target_name':old,'outcome':'existing'})
             return old
+        if identity in getattr(self, 'skip_identities', ()):
+            # Failed earlier in this run and already reported; a later page
+            # must not spend its allowance on the same record again.
+            return None
         if batched:
             if self.batch_attempted >= self.batch_limit or (self.batch_attempted and time.monotonic() >= self.batch_deadline):
                 raise BatchBoundary()
@@ -293,7 +301,7 @@ class Loader:
         project = self.project_context().assignment_project(row)
         self.check_terms_project(project, deployment.terms_of_reference)
         self.check_terms_project(project, document.terms_of_reference)
-        if document.status != assignment_state(row):
+        if document.status not in (assignment_state(row), self.assignment_status(row, deployment.status)):
             raise ValueError('Source/destination assignment response changed; review before updating: '+name)
 
     def project_department(self, doctype, row, company, abbreviation):
@@ -329,6 +337,7 @@ class Loader:
             # Existing target names may be ahead of a stale target counter.
             self.naming.reserve('Project', 'Project',
                 [r['name'] for r in projects]+frappe.get_all('Project', pluck='name'))
+            self.project_types(projects)
         for row in projects:
             def build(r):
                 dates = ('expected_start_date', 'expected_end_date', 'actual_start_date', 'actual_end_date')
@@ -388,6 +397,62 @@ class Loader:
             'warning': 'Created recorded legacy UOM label: '+str(unit)+'; no conversion inferred'})
         return doc.name
 
+    def methodology(self, label, parent):
+        """The old TOR typed its method as free text; vmmsx keeps a register.
+        A label the register lacks is added exactly as written, switched off,
+        so the old TOR keeps its wording and new TORs are not offered it."""
+        label = str(label).strip()
+        existing = frappe.db.get_value('VMMS TOR Methodology', {'methodology_name': label})
+        if existing:
+            return existing
+        slug = re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_')[:100] or 'method'
+        name = slug if not frappe.db.exists('VMMS TOR Methodology', slug) else slug[:90]+'_'+key('method', label)[:8]
+        frappe.get_doc({'doctype': 'VMMS TOR Methodology', 'methodology_key': name,
+            'methodology_name': label, 'is_active': 0}).insert(ignore_permissions=True)
+        self.warnings.append({'source_doctype': 'Personnel Terms of Reference', 'source_name': parent,
+            'warning': 'Added the old methodology "'+label+'" to the register, switched off'})
+        return name
+
+    def project_types(self, projects):
+        """Old Project Types the destination lacks are added with their old names."""
+        for kind in sorted({str(r['project_type']) for r in projects if r.get('project_type')}):
+            if not frappe.db.exists('Project Type', kind):
+                frappe.get_doc({'doctype': 'Project Type', 'project_type': kind}).insert(ignore_permissions=True)
+                self.warnings.append({'source_doctype': 'Project', 'source_name': kind,
+                    'warning': 'Added the old Project Type "'+kind+'"'})
+
+    @staticmethod
+    def deployment_status(start, end):
+        """Where an old deployment stands today: ended ones are Completed,
+        running ones Active, the rest Planned."""
+        from frappe.utils import getdate
+        today = getdate()
+        if end and getdate(end) < today:
+            return 'Completed'
+        if start and getdate(start) <= today:
+            return 'Active'
+        return 'Planned'
+
+    @staticmethod
+    def assignment_status(row, deployment_status):
+        """An ask nobody answered before its deployment finished has expired
+        (decision, 15 Nov 2026). Every answer that was given is kept."""
+        state = assignment_state(row)
+        if state == 'Pending' and deployment_status in ('Completed', 'Closed Out', 'Cancelled'):
+            return 'Expired'
+        return state
+
+    def coordinator(self, doctype, row):
+        """The old tool's creator. One the destination cannot resolve (an
+        account that was not imported) leaves Administrator, reported, so the
+        deployment and its volunteers still come across."""
+        user = self.target('User', row.get('owner'), required=False)
+        if not user:
+            user = 'Administrator'
+            self.warnings.append({'source_doctype': doctype, 'source_name': row.get('name'),
+                'warning': 'Coordinator '+str(row.get('owner'))+' was not imported; Administrator recorded'})
+        return user
+
     def terms(self):
         child_map={'stakeholders':('TOR Stakeholders','stakeholder'), 'objectives':('TOR Objectives','objective'),
             'expected_outputs':('TOR Outputs','output'), 'approach_methods':('TOR Approach Methods','approach'),
@@ -399,7 +464,10 @@ class Loader:
                     'expected_start_date':r.get('expected_start_date'),'expected_end_date':r.get('expected_end_date'),
                     'mission_background':r.get('mission_background'),'approval_mode':'direct',
                     'docstatus':int(r.get('docstatus') or 0),'approval_state':{'Approved':'Approved','Draft':'Draft','Pending Approval':'Submitted'}.get(r.get('workflow_state'),'Draft'),
-                    'notes':r.get('notes') or ''}
+                    'notes':r.get('notes') or '',
+                    # Old terms stay on their deployments and in history but are
+                    # not offered for new deployments; staff can switch one on.
+                    'is_active':0}
                 for field,(child_dt,required_field) in child_map.items():
                     target_child=frappe.get_meta('VMMS Terms of Reference').get_field(field).options
                     target_meta=frappe.get_meta(target_child)
@@ -414,7 +482,7 @@ class Loader:
                             candidates=[v for k,v in child.items() if k not in ('name','parent','parenttype','parentfield','owner','modified_by','creation','modified','idx','docstatus') and isinstance(v,str) and v]
                             if len(candidates)==1:new[required_field]=candidates[0]
                         if field=='approach_methods' and child.get('methodology'):
-                            new['methodology']=frappe.db.get_value('VMMS TOR Methodology',{'methodology_name':child['methodology']})
+                            new['methodology']=self.methodology(child['methodology'], r['name'])
                         if field=='resources':
                             new['needed_on']=child.get('date')
                             new['unit_cost']=child.get('cost_per_day')
@@ -439,7 +507,11 @@ class Loader:
         """
         if (r.get('title') or '').strip():
             return r['title']
-        from vmmsx.deployment.services.deployment import default_title
+        try:
+            from vmmsx.deployment.services.deployment import default_title
+        except ImportError:
+            # A vmmsx from before deployment titles has no title field either.
+            return r.get('name') or ''
         return default_title(frappe._dict(terms_of_reference=terms, name='', geo_node=self.geo(r.get('company')),
             planned_start=r.get('expected_start_date'),
             start_date=normalise.date(r.get('expected_start_date'))))
@@ -468,10 +540,13 @@ class Loader:
                 else:
                     raise ValueError('Legacy deployment has neither structured terms nor an original terms document')
                 self.check_terms_project(source_project, terms)
-                coordinator=self.target('User',r.get('owner'))
                 return {'title':self.deployment_title(r,terms),
                     'terms_of_reference':terms,'geo_node':self.geo(r.get('company')),
-                    'coordinator':coordinator,'status':'Planned','volunteers_required':r.get('number_of_volunteers_required'),
+                    'coordinator':self.coordinator('Deployment Request Tool', r),
+                    'status':self.deployment_status(r.get('expected_start_date'), r.get('expected_end_date')),
+                    'site_name':(r.get('location') or '').strip() or None,
+                    'requires_contract':int(bool(int(r.get('require_contract_before_deployment') or 0))),
+                    'volunteers_required':r.get('number_of_volunteers_required'),
                     'planned_start':r.get('expected_start_date'),'planned_end':r.get('expected_end_date'),
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
                     'notes':(r.get('notes') or '')+presentation.DEPLOYMENT_SUFFIX}
@@ -499,7 +574,8 @@ class Loader:
                         historical.insert('VMMS Deployment',{'terms_of_reference':terms,
                             'title': self.deployment_title(title_source, terms),
                             'geo_node':self.geo(original['company']),
-                            'coordinator':self.target('User',r.get('owner')),'status':'Planned',
+                            'coordinator':self.coordinator('Personnel Deployment Request', r),
+                            'status':self.deployment_status(r.get('expected_start_date'), r.get('expected_end_date')),
                             'volunteers_required':1,'planned_start':r.get('expected_start_date'),
                             'planned_end':r.get('expected_end_date'),
                             'notes':presentation.ASSIGNMENT_NOTE},name=name)
@@ -510,7 +586,7 @@ class Loader:
                 self.check_terms_project(source_project, d.terms_of_reference)
                 self.check_terms_project(source_project, terms)
                 return {'deployment':deployment,'volunteer':volunteer,'terms_of_reference':terms,
-                    'geo_node':d.geo_node,'status':assignment_state(r),'role':'member',
+                    'geo_node':d.geo_node,'status':self.assignment_status(r, d.status),'role':'member',
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
                     'invited_on':r.get('creation'),'invited_by':self.target('User',r.get('owner'),required=False),
                     'notes':r.get('notes')}
@@ -526,6 +602,11 @@ class Loader:
         for row in self.history.rows('Buzz Event'):
             def build(r):
                 values=self.copy_values('Buzz Event',r,omit=('ticket_email_template','ticket_print_format','default_ticket_type'))
+                if r.get('company') and frappe.get_meta('Buzz Event').has_field('geo_node'):
+                    try:
+                        values['geo_node']=self.geo(r['company'])
+                    except ValueError as exc:
+                        self.warn('Buzz Event', r, str(exc))
                 if r.get('event_access') not in (None,'','Public'):
                     values['is_published']=0  # Never turn a restricted source event into a public event.
                 values.update(send_booking_confirmation_email=0,send_ticket_email=0,auto_send_pitch_deck=0)
@@ -552,7 +633,7 @@ class Loader:
                     invoices_by_booking.setdefault(original['event_booking'],[]).append(invoice)
         for row in self.history.rows('Event Booking'):
             def build(r):
-                values=self.copy_values('Event Booking',r,omit=('amended_from','coupon_code','payment_status','status'))
+                values=self.copy_values('Event Booking',r,omit=('amended_from','coupon_code','payment_status','status','user'))
                 attendees=[]
                 for child in self.history.children('Event Booking',r['name'],'attendees'):
                     a={f:child.get(f) for f in ('full_name','email','ticket_type','currency','amount','add_on_total','number_of_add_ons')}

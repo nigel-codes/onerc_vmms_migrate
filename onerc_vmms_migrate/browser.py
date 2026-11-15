@@ -29,6 +29,8 @@ ACTIONS = {
 	"reconcile",
 	"repairs_preview",
 	"repairs_apply",
+	"history_preview",
+	"history_import",
 }
 
 
@@ -155,6 +157,9 @@ def start(
 	if action == "repairs_apply":
 		from onerc_vmms_migrate import post_import_repairs
 		repairs = post_import_repairs.validate_request(repairs, confirmation, backup_confirmed)
+	if action == "history_import":
+		from onerc_vmms_migrate import history_import
+		history_import.validate_request(confirmation, backup_confirmed)
 	if resume_capture_id:
 		_validate_resume_capture(action, resume_capture_id)
 	settings = frappe.get_single(SETTINGS)
@@ -177,7 +182,7 @@ def start(
 	existing_batch = batches.checkpoint()
 	if existing_batch and existing_batch.get("scope")=="people" and existing_batch["status"]=="finished" and action in ("capture","people_import"):
 		existing_batch=None
-	if existing_batch and action not in ("check", "selftest", "profile", "plan", "project_plan", "reconcile", "repairs_preview", "repairs_apply"):
+	if existing_batch and action not in ("check", "selftest", "profile", "plan", "project_plan", "reconcile", "repairs_preview", "repairs_apply", "history_preview", "history_import"):
 		frappe.throw("A batch session already exists. Use its Pause/Resume controls; trial records cannot be promoted to a live import.")
 	if action in ("batch_test","people_import") or (action == "import" and batch_size):
 		if action == "batch_test" and (confirmation != "TEST" or not test_destination or not backup_confirmed):
@@ -266,7 +271,7 @@ def execute(token, action, user):
 	from frappe.installer import update_site_config
 	from frappe.utils.scheduler import disable_scheduler
 
-	from onerc_vmms_migrate import run, full_run, full_reconcile, post_import_repairs, project_mapping
+	from onerc_vmms_migrate import run, full_run, full_reconcile, history_import, post_import_repairs, project_mapping
 	from onerc_vmms_migrate.browser_source import capture
 
 	if frappe.cache.get(lock_key()) != token.encode():
@@ -347,8 +352,10 @@ def execute(token, action, user):
 				"reconcile": full_reconcile.execute,
 				"repairs_preview": post_import_repairs.preview,
 				"repairs_apply": post_import_repairs.apply,
+				"history_preview": history_import.preview,
+				"history_import": history_import.apply,
 			}
-			with_progress = ("rehearsal", "repairs_preview", "repairs_apply")
+			with_progress = ("rehearsal", "repairs_preview", "repairs_apply", "history_preview", "history_import")
 			result = funcs[action](progress=report_progress) if action in with_progress else funcs[action]()
 			if action == "rehearsal":
 				value["rehearsal"] = {

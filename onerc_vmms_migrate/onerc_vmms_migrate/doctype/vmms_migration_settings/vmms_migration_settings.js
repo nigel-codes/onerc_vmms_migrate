@@ -192,6 +192,18 @@ frappe.ui.form.on('VMMS Migration Settings', {
     dialog.hide();
    }}); dialog.show();
   }, __('Post-import repairs'));
+  add('Preview history', 'history_preview', 'History import');
+  frm.add_custom_button(__('Import history'), () => {
+   const dialog = new frappe.ui.Dialog({title: __('Import projects, TORs and deployments'), fields: [
+    {fieldtype: 'HTML', options: '<p>Read history-summary.json and history-not-imported.csv from the latest Preview history first. This brings in the projects, tasks, terms of reference, deployments and their requests, events, availability and time logs from the selected capture, with their files. Nobody is sent email, SMS or an alert. Work is saved as it goes, so a stopped run can simply be started again; it skips what is already in.</p>'},
+    {fieldname: 'backup_confirmed', fieldtype: 'Check', label: __('I have a current database backup'), reqd: 1},
+    {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type HISTORY'), reqd: 1}
+   ], primary_action_label: __('Import history'), primary_action: async values => {
+    await start('history_import', {confirmation: values.confirmation,
+     backup_confirmed: values.backup_confirmed === 1 || values.backup_confirmed === true});
+    dialog.hide();
+   }}); dialog.show();
+  }, __('History import'));
   frm.add_custom_button(__('Import captured data'), async () => {
    const {message: state} = await frappe.call({method: migration_api + 'status'});
    const needs_email_test = !!state.rehearsal?.authentication_policy?.mail_delivery_test_required;

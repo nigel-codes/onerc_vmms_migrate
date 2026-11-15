@@ -1,4 +1,14 @@
-# VMMS migration receiver — 0.6.0
+# VMMS migration receiver — 0.9.0
+
+Project mapping, dynamic numbering and exact volunteer participation-link checks
+are described in [Project preparation](docs/project-mapping-2026-11-15.md).
+The new read-only project_plan action reviews the selected capture after the
+completed people phase; it does not start an operational import.
+
+After the people session, [Post-import repairs](docs/post-import-repairs-2026-11-15.md)
+and the [history import](docs/history-import-2026-11-15.md) (projects, terms of
+reference, deployments, events) run from VMMS Migration Settings, each with a
+preview that changes nothing.
 
 The approved missing-email aliases and per-source identity reports are described
 in [IDENTITY_RECONCILIATION.md](IDENTITY_RECONCILIATION.md). Placeholder addresses

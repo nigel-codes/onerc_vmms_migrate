@@ -177,7 +177,7 @@ class TestHistorySourceGaps(TestCase):
 			)
 			loader.targets[("Employee", "VOL-1")] = "VOL-native"
 			builders = []
-			loader.one = lambda dt, row, target, build: builders.append((row, build))
+			loader.one = lambda dt, row, target, build, **kwargs: builders.append((row, build))
 			loader.deployments()
 			row, build = builders[0]
 			with self.assertRaises(ValueError) as raised:

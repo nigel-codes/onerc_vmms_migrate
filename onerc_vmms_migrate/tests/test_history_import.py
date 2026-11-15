@@ -258,3 +258,32 @@ class TestReconcile(TestCase):
 			"Volunteer Language": {"fields": []},
 		}}
 		self.assertEqual(history_import.archived_doctypes(snapshot), ["Job Applicant"])
+
+
+class TestFileScope(TestCase):
+	def test_only_the_history_records_files_are_copied_never_an_applicants(self):
+		snapshot = {
+			"schemas": {"Job Applicant": {"fields": []}, "Buzz Event": {"fields": []}},
+			"all_file_manifest": {
+				"/files/cv.pdf": {"references": [{"attached_to_doctype": "Job Applicant", "attached_to_name": "a"}]},
+				"/files/banner.png": {"references": [
+					{"attached_to_doctype": "Buzz Event", "attached_to_name": "e"},
+					{"attached_to_doctype": "Job Applicant", "attached_to_name": "a"},
+				]},
+			},
+		}
+		history = MagicMock()
+		history.rows.side_effect = lambda dt: [{"name": dt[0].lower()}]
+		with (
+			patch("onerc_vmms_migrate.history_model.History", return_value=history),
+			patch("onerc_vmms_migrate.full_run.attachments", return_value={}) as attachments,
+		):
+			history_import.files(snapshot, MagicMock(), "run", live=True)
+		part = attachments.call_args.args[0]
+		self.assertEqual(list(part["all_file_manifest"]), ["/files/banner.png"])
+		self.assertEqual(
+			part["all_file_manifest"]["/files/banner.png"]["references"],
+			[{"attached_to_doctype": "Buzz Event", "attached_to_name": "e"}],
+		)
+		self.assertEqual({row["doctype"] for row in part["history"].values()}, {"Buzz Event"})
+		self.assertEqual(part["users"], {})

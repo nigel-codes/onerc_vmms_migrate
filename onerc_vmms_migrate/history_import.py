@@ -240,11 +240,12 @@ def convert(loader, snapshot, live, commit, progress):
 
 def files(snapshot, source, run_id, live):
 	"""Attachments of the converted records, and nothing of the people's:
-	references to other doctypes are dropped before the copy."""
+	references to other doctypes, applicants' included (the people session
+	placed those on profiles), are dropped before the copy."""
 	from onerc_vmms_migrate import full_run
 	from onerc_vmms_migrate.history_model import History
 
-	parents = set(CONVERTED)
+	parents = set(CONVERTED) - set(PEOPLE_OWNED)
 	manifest = {}
 	for url, item in snapshot.get("all_file_manifest", snapshot.get("captured_file_manifest", {})).items():
 		references = [r for r in item.get("references") or [] if r.get("attached_to_doctype") in parents]
@@ -253,6 +254,8 @@ def files(snapshot, source, run_id, live):
 	history = History(snapshot)
 	rows = {}
 	for dt in archived_doctypes(snapshot):
+		if dt in PEOPLE_OWNED:
+			continue
 		for row in history.rows(dt):
 			rows[f"{dt}\0{row['name']}"] = {"doctype": dt, "record": row}
 	part = {**snapshot, "history": rows, "users": {}, "all_file_manifest": manifest}

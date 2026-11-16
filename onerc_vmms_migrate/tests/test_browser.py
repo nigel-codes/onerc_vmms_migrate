@@ -255,7 +255,8 @@ class TestServiceRecovery(TestCase):
 
 	@patch.object(browser, "authorize")
 	@patch.object(browser, "assert_idle")
-	def test_incomplete_import_requires_explicit_recovery(self, idle, authorize):
+	@patch.object(browser, "assert_no_held_mail")
+	def test_incomplete_import_requires_explicit_recovery(self, held, idle, authorize):
 		with (
 			patch.object(
 				browser, "state", return_value={"cutover": {"scheduler_enabled": False, "mute_emails": 1}}
@@ -267,7 +268,8 @@ class TestServiceRecovery(TestCase):
 	@patch.object(browser, "authorize")
 	@patch.object(browser, "assert_idle")
 	@patch.object(browser, "save_state")
-	def test_recovery_restores_original_values_without_deleting_records(self, save, idle, authorize):
+	@patch.object(browser, "assert_no_held_mail")
+	def test_recovery_restores_original_values_without_deleting_records(self, held, save, idle, authorize):
 		value = {"cutover": {"scheduler_enabled": False, "mute_emails": 1}, "import_result": {"failed": 3}}
 		with (
 			patch.object(browser, "state", return_value=value),
@@ -281,3 +283,36 @@ class TestServiceRecovery(TestCase):
 		self.assertNotIn("cutover", value)
 		self.assertEqual(value["import_result"]["failed"], 3)
 		self.assertTrue(value["services_restored_after_failure"])
+		held.assert_called_once_with(False)
+
+
+class TestHeldMail(TestCase):
+	"""Muting holds mail in the queue; the first scheduler run after the cutover
+	would send all of it. Finishing waits for the operator to choose."""
+
+	def setUp(self):
+		throw = patch.object(frappe, "throw", side_effect=lambda message, *a, **k: (_ for _ in ()).throw(frappe.ValidationError(message)))
+		throw.start()
+		self.addCleanup(throw.stop)
+
+	def test_finishing_refuses_while_mail_is_held(self):
+		with patch.object(frappe, "db", MagicMock(count=MagicMock(return_value=4))):
+			with self.assertRaisesRegex(frappe.ValidationError, "4 emails"):
+				browser.assert_no_held_mail(False)
+			browser.assert_no_held_mail(True)  # the operator chose to send them
+
+	def test_finishing_goes_ahead_with_nothing_held(self):
+		with patch.object(frappe, "db", MagicMock(count=MagicMock(return_value=0))):
+			browser.assert_no_held_mail(False)
+
+	@patch.object(browser, "authorize")
+	@patch.object(browser, "assert_idle")
+	def test_finish_and_restore_both_check(self, idle, authorize):
+		with (
+			patch.object(browser, "state", return_value={"cutover": {"scheduler_enabled": False, "mute_emails": 1}}),
+			patch.object(browser, "assert_no_held_mail", side_effect=frappe.ValidationError) as held,
+		):
+			for args in ((), ("RESTORE",)):
+				with self.subTest(args=args), self.assertRaises(frappe.ValidationError):
+					browser.finish_cutover(*args)
+		self.assertEqual(held.call_count, 2)

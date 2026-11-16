@@ -20,7 +20,11 @@ ALLOWED = {'Version', 'VMMS Membership', 'VMMS Volunteer Application', 'VMMS Ter
            'VMMS Availability Schedule', 'VMMS Certification', 'VMMS Time Log',
            'VMMS Task', 'VMMS Event Attendance', 'Project', 'Task', 'Event',
            'Event Category', 'Event Host', 'Event Venue', 'Buzz Event', 'Event Ticket Type',
-           'Event Booking', 'Event Ticket', 'Event Check In', 'Buzz Custom Field'}
+           'Event Booking', 'Event Ticket', 'Event Check In', 'Buzz Custom Field',
+           # Helpdesk tickets and their threads (helpdesk_load, 0.10.0).
+           'HD Ticket', 'HD Ticket Status', 'HD Ticket Priority', 'HD Ticket Type',
+           'HD Ticket Feedback Option', 'HD Service Holiday List', 'HD Service Level Agreement',
+           'HD Team', 'HD Agent', 'HD Ticket Comment', 'Communication', 'Comment', 'ToDo'}
 
 
 def insert(doctype, values, name=None, *, owner=None):
@@ -69,6 +73,9 @@ def insert(doctype, values, name=None, *, owner=None):
         if unclaimed:doc.user=None
     doc.db_insert()
     for child in doc.get_all_children():
+        if not child.name and getattr(getattr(child, 'meta', None), 'autoname', None) == 'autoincrement':
+            # An integer key (HD Team Member): the table's own sequence.
+            child.name = frappe.db.get_next_sequence_val(child.doctype)
         child.name = child.name or uuid.uuid4().hex[:10]
         child.parent = doc.name
         child.parenttype = doc.doctype

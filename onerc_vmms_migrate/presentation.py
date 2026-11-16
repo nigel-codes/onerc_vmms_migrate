@@ -8,10 +8,15 @@ OLD_TERMS_NOTE = "Imported legacy terms; original wording and state retained in 
 OLD_DEPLOYMENT_SUFFIX = (
 	"\nImported legacy deployment; no lifecycle status was recorded. Planned is the destination default."
 )
-DEPLOYMENT_SUFFIX = "\nStatus was not recorded. Planned is the current default."
+# Written by 0.9.0 and earlier. Untrue since the status comes from the dates
+# (decision, 15 Nov 2026), and volunteers read these notes on their invitations.
+STATUS_DEPLOYMENT_SUFFIX = "\nStatus was not recorded. Planned is the current default."
+# An imported deployment's notes are the old notes exactly; nothing is appended.
+DEPLOYMENT_SUFFIX = ""
 OLD_FILE_TERMS_NOTE = "Legacy terms were supplied as a file or URL. Original structured wording and approval were not recorded. This draft is retained as evidence and is inactive for new work."
 FILE_TERMS_NOTE = "Terms are supplied as an attached document. A structured approval record is unavailable. Not available for new work."
-ASSIGNMENT_NOTE = "Original deployment details are unavailable. Dates and scope follow the recorded assignment and terms. Status was not recorded; Planned is the current default."
+STATUS_ASSIGNMENT_NOTE = "Original deployment details are unavailable. Dates and scope follow the recorded assignment and terms. Status was not recorded; Planned is the current default."
+ASSIGNMENT_NOTE = "Original deployment details are unavailable. Dates and scope follow the recorded assignment and terms."
 
 
 def synthetic(row):
@@ -44,8 +49,11 @@ def clean_notes(doctype, value):
 		if value == OLD_FILE_TERMS_NOTE:
 			return FILE_TERMS_NOTE
 	if doctype == "VMMS Deployment" and isinstance(value, str):
-		if value.endswith(OLD_DEPLOYMENT_SUFFIX):
-			return value[: -len(OLD_DEPLOYMENT_SUFFIX)] + DEPLOYMENT_SUFFIX
+		for suffix in (OLD_DEPLOYMENT_SUFFIX, STATUS_DEPLOYMENT_SUFFIX):
+			if value.endswith(suffix):
+				return value[: -len(suffix)] + DEPLOYMENT_SUFFIX
+		if value == STATUS_ASSIGNMENT_NOTE:
+			return ASSIGNMENT_NOTE
 		if re.fullmatch(
 			r"Derived historical container for legacy assignment .+\. The original parent deployment was absent\. Dates and scope come from its recorded assignment and terms; Planned is the destination default\.",
 			value,

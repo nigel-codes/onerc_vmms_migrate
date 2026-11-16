@@ -16,6 +16,20 @@ Agreed with KRCS on 15 November 2026, after the production people import:
    7 or 8 digits; the rest are reported.
 7. Active life memberships carry no end date.
 
+Added on 16 November 2026, for the history import and the end of the cutover:
+
+8. An old event booking whose account was not there when the history came
+   across is linked to that account once it exists, so the person sees it.
+9. Imported applications and memberships still waiting are put in the queue
+   of whoever reviews them now, without the assignment email the first
+   scheduled run after the cutover would otherwise send.
+10. The comments reviewers left on old applications and memberships ("Kindly
+   attach your documents") come across as the same comments on the records
+   they became, with their author and date. Desk shows them on the record.
+11. Mail queued while the cutover held email is set aside (status Error, with
+   the reason), so Finish cutover does not send it. Retry Sending in the Email
+   Queue list sends any one of them deliberately.
+
 Each repair finds what still needs repairing, so it is safe to run again: after
 a later people capture it repairs only the newcomers, and a stopped run is
 simply started again. Preview writes a report and changes nothing. Apply runs
@@ -48,6 +62,10 @@ REPAIRS = {
 	"approved_without_volunteer": "Make volunteers from approved applications that have none",
 	"identity_numbers": "File untyped 7–8 digit ID numbers as National ID",
 	"life_memberships": "Clear the end date on active life memberships",
+	"event_bookings": "Link old event bookings to accounts that now exist",
+	"approval_routing": "Queue imported waiting records with their current reviewers, without emailing them",
+	"reviewer_notes": "Copy the comments reviewers left on old applications and memberships",
+	"held_mail": "Set aside mail queued during the cutover so it is not sent",
 }
 ORDER = tuple(REPAIRS)
 
@@ -678,6 +696,314 @@ def apply_life_memberships(plan, progress, quiet) -> dict:
 	return {"end_dates_cleared": len(plan["todo"])}
 
 
+# --- 8. event bookings ----------------------------------------------------
+
+BOOKING = "Event Booking"
+DETAIL_ROWS = 500
+
+
+def plan_event_bookings() -> dict:
+	"""Unclaimed imported bookings whose person has an account now.
+
+	The history import links a booking to its account when the account is
+	there. A person brought in by a later people catch-up never had theirs
+	linked, and Buzz lists a person's bookings by account. The account comes
+	from the old booking as archived: its user, or else its primary contact's
+	email, through the people session's record of that account.
+	"""
+	from onerc_vmms_migrate.normalise import email as clean_email
+	from onerc_vmms_migrate.placeholder_emails import PATTERN
+
+	if not frappe.db.exists("DocType", BOOKING) or not frappe.get_meta(BOOKING).has_field("legacy_unclaimed_booking"):
+		return {"summary": {"error": "Buzz or the legacy booking fields are not installed."}, "details": {}, "todo": []}
+	unclaimed = frappe.get_all(BOOKING, filters={"legacy_unclaimed_booking": 1, "user": ["is", "not set"]}, pluck="name")
+	sources = dict(frappe.db.sql("""select target_name, source_payload from `tabLegacy VMMS Document`
+		where source_doctype = %s and target_doctype = %s and conversion_status = 'Converted'
+		and target_name in %s""", (BOOKING, BOOKING, tuple(unclaimed) or ("",)))) if unclaimed else {}
+	imported = dict(frappe.db.sql("""select source_name, target_name from `tabLegacy Migration Record`
+		where source_doctype = 'User' and target_doctype = 'User'"""))
+
+	def account(candidate):
+		if not candidate or candidate in SYSTEM_ACCOUNTS or PATTERN.fullmatch(candidate):
+			return None
+		found = imported.get(candidate) or (candidate if frappe.db.exists("User", candidate) else None)
+		return found if found and found not in SYSTEM_ACCOUNTS else None
+
+	todo, outcomes, left = [], Counter(), []
+	for name in unclaimed:
+		payload = sources.get(name)
+		if not payload:
+			outcomes["no archived old booking"] += 1
+			left.append({"booking": name, "why": "no archived old booking"})
+			continue
+		data = json.loads(payload)
+		old = data.get("record", data) if isinstance(data, dict) else {}
+		by_user = account(old.get("user"))
+		contact = clean_email(old.get("primary_contact"))
+		user = by_user or account(contact)
+		if user:
+			outcomes["link by its user" if by_user else "link by its primary contact"] += 1
+			todo.append({"booking": name, "user": user})
+		else:
+			why = "placeholder address" if contact and PATTERN.fullmatch(contact) else "no account yet"
+			outcomes[why] += 1
+			left.append({"booking": name, "why": why})
+	return {
+		"summary": {"unclaimed": len(unclaimed), "to_link": len(todo), **dict(outcomes)},
+		"details": {"to_link": todo[:DETAIL_ROWS], "left_unclaimed": left[:DETAIL_ROWS]},
+		"todo": todo,
+	}
+
+
+def apply_event_bookings(plan, progress, quiet) -> dict:
+	linked = 0
+	for done, item in enumerate(plan["todo"], start=1):
+		# A plain write: the booking is submitted and its hooks send tickets.
+		if not frappe.db.get_value(BOOKING, item["booking"], "user"):
+			frappe.db.set_value(BOOKING, item["booking"], {"user": item["user"], "legacy_unclaimed_booking": 0},
+				update_modified=False)
+			linked += 1
+		if done % 500 == 0:
+			_commit_page(quiet)
+			progress(done, len(plan["todo"]))
+	return {"bookings_linked": linked}
+
+
+# --- 9. routing of imported waiting records -------------------------------
+
+
+def plan_approval_routing() -> dict:
+	"""Imported records in review whose queue differs from who may decide today.
+
+	vmmsx's daily resync (repair.resync_pending) moves them at the first run
+	after the cutover, and Frappe emails each new assignee. While the cutover
+	lasted, a change of County Coordinator or area did not move them, so every
+	such change made then would be emailed at once.
+	"""
+	from vmmsx.approvals.services import assignment, config, engine
+
+	todo, outcomes, failed = [], Counter(), []
+	reminders = SlaReminders()
+	for doctype in config.governed_doctypes():
+		if not frappe.db.exists("DocType", doctype):
+			continue
+		imported = set(_column("""select target_name from `tabLegacy Migration Record` where target_doctype = %s""", (doctype,)))
+		waiting = frappe.get_all(doctype, filters={"approval_state": "In Review", "approval_stage": ["is", "set"]}, pluck="name")
+		for name in waiting:
+			if name not in imported:
+				continue
+			try:
+				doc = frappe.get_doc(doctype, name)
+				admitted = sorted(engine.authorised(doc)["approvers"])
+				reminders.count(doc)
+			except Exception as error:
+				failed.append({"doctype": doctype, "record": name, "why": str(error)[:200]})
+				continue
+			if not admitted:
+				outcomes[f"{doctype}: nobody may decide (left as it is)"] += 1
+			elif sorted(assignment.assignees(doctype, name)) == admitted:
+				outcomes[f"{doctype}: already queued right"] += 1
+			else:
+				outcomes[f"{doctype}: to move"] += 1
+				todo.append({"doctype": doctype, "record": name})
+	return {
+		"summary": {"to_move": len(todo), "cannot_check": len(failed), **dict(outcomes),
+			"overdue_reminders_after_the_cutover": reminders.summary()},
+		"details": {"to_move": todo[:DETAIL_ROWS], "cannot_check": failed[:DETAIL_ROWS]},
+		"todo": todo,
+	}
+
+
+class SlaReminders:
+	"""What vmmsx's daily SLA sweep would do with the imported backlog once the
+	scheduler runs: a bell, every day, to each routed reviewer of each record
+	overdue at a notify-only stage. Counted for the operator; nothing changes
+	(whether to keep them is the society's decision)."""
+
+	def __init__(self):
+		from frappe.utils import add_days
+
+		self.now, self.week = now_datetime(), add_days(now_datetime(), 7)
+		self.overdue = self.within_a_week = self.bells_a_day = 0
+		self.reviewers = set()
+
+	def count(self, doc) -> None:
+		from vmmsx.approvals.services import config, contract, routing, sla
+
+		workflow = config.for_doctype(doc.doctype)
+		stage = config.stage_by_name(workflow, contract.stage(doc))
+		if not stage or stage.on_sla_breach != sla.BREACH_NOTIFY_ONLY:
+			return
+		if sla.is_breached(doc, stage, self.week):
+			late = routing.routed(stage, config.stage_anchor(doc, workflow, stage))
+			self.reviewers.update(late)
+			if sla.is_breached(doc, stage, self.now):
+				self.overdue += 1
+				self.bells_a_day += len(late)
+			else:
+				self.within_a_week += 1
+
+	def summary(self) -> dict:
+		return {"overdue_now": self.overdue, "bells_a_day_now": self.bells_a_day,
+			"overdue_within_a_week": self.within_a_week, "reviewers_reminded": len(self.reviewers)}
+
+
+def apply_approval_routing(plan, progress, quiet) -> dict:
+	from frappe.desk.form import assign_to
+	from vmmsx.approvals.services import repair
+
+	moved = 0
+	# The same move the daily resync makes, with Frappe's assignment notice off
+	# for this process, as for the waiting applications (repair 4).
+	with silence.replacing(assign_to, "notify_assignment", lambda *args, **kwargs: None):
+		for done, item in enumerate(plan["todo"], start=1):
+			if repair._resync_one(item["doctype"], item["record"]):
+				moved += 1
+			if done % PAGE == 0:
+				_commit_page(quiet)
+				progress(done, len(plan["todo"]))
+	return {"moved": moved}
+
+
+# --- 10. reviewer notes ---------------------------------------------------
+
+NOTE_SOURCES = {"Job Applicant": APPLICATION, "VM Membership": "VMMS Membership"}
+
+
+def plan_reviewer_notes() -> dict:
+	"""The old reviewers' comments, each matched to the record its application
+	or membership became.
+
+	Read from the selected capture. Only human comments (type Comment) on old
+	applications and memberships; an application left alone (a job or
+	opportunity application) has no record here, so its comments are counted
+	and stay in the capture. A comment keeps its old name, so one already
+	brought across is found and not added twice.
+	"""
+	targets = {}
+	for source, target in NOTE_SOURCES.items():
+		for name, found in frappe.db.sql("""select source_name, target_name from `tabLegacy VMMS Document`
+			where source_doctype = %s and target_doctype = %s and conversion_status = 'Converted'""", (source, target)):
+			targets[(source, str(name))] = (target, found)
+		for name, found in frappe.db.sql("""select source_name, target_name from `tabLegacy Migration Record`
+			where source_doctype = %s and target_doctype = %s""", (source, target)):
+			targets[(source, str(name))] = (target, found)
+	with _capture() as rows:
+		if rows is None:
+			return {"summary": {"error": "The selected capture has no history."}, "details": {}, "todo": []}
+		notes = [row for row in rows("Comment")
+			if row.get("comment_type") == "Comment" and row.get("reference_doctype") in NOTE_SOURCES]
+	present = set(_column("select name from tabComment where name in %s", (tuple(n["name"] for n in notes) or ("",),)))
+	todo, outcomes, unmatched = [], Counter(), []
+	for note in notes:
+		target = targets.get((note["reference_doctype"], str(note.get("reference_name"))))
+		if note["name"] in present:
+			outcomes["already here"] += 1
+		elif not target or not frappe.db.exists(*target):
+			outcomes[f"{note['reference_doctype']} not imported"] += 1
+			unmatched.append({"old": f"{note['reference_doctype']} {note.get('reference_name')}", "comment": note["name"]})
+		else:
+			outcomes[f"to add on {target[0]}"] += 1
+			todo.append({"note": note, "target": list(target)})
+	states = Counter()
+	for item in todo:
+		states[f"{item['target'][0]}: {frappe.db.get_value(*item['target'], 'approval_state') or 'no state'}"] += 1
+	return {
+		"summary": {"old_comments": len(notes), **dict(outcomes), "on_records_now": dict(states)},
+		"details": {"examples": [
+			{"on": " ".join(item["target"]), "by": item["note"].get("comment_email"), "on_date": str(item["note"].get("creation")),
+			 "text": re.sub(r"<[^>]+>", " ", str(item["note"].get("content") or "")).strip()[:200]}
+			for item in todo[:DETAIL_ROWS]
+		], "not_imported_records": unmatched[:DETAIL_ROWS]},
+		"todo": todo,
+	}
+
+
+def apply_reviewer_notes(plan, progress, quiet) -> dict:
+	"""Each comment as it was: text, author, date. Written as a row of its own,
+	so no mention or follow notice is sent."""
+	imported = dict(frappe.db.sql("""select source_name, target_name from `tabLegacy Migration Record`
+		where source_doctype = 'User' and target_doctype = 'User'"""))
+	added = 0
+	for done, item in enumerate(plan["todo"], start=1):
+		note = item["note"]
+		if frappe.db.exists("Comment", note["name"]):
+			continue
+		author = note.get("owner")
+		author = imported.get(author) or (author if author and frappe.db.exists("User", author) else "Administrator")
+		comment = frappe.get_doc({
+			"doctype": "Comment",
+			"name": note["name"],
+			"comment_type": "Comment",
+			"reference_doctype": item["target"][0],
+			"reference_name": item["target"][1],
+			"content": note.get("content"),
+			"comment_email": note.get("comment_email"),
+			"comment_by": note.get("comment_by"),
+			"published": 0,
+			"seen": int(note.get("seen") or 0),
+			"owner": author,
+			"modified_by": author,
+			"creation": note.get("creation"),
+			"modified": note.get("modified") or note.get("creation"),
+		})
+		comment.db_insert()
+		added += 1
+		if done % 500 == 0:
+			_commit_page(quiet)
+			progress(done, len(plan["todo"]))
+	return {"comments_added": added}
+
+
+# --- 11. mail held by the cutover ----------------------------------------
+
+HELD_STATUSES = ("Not Sent", "Partially Sent")
+HELD_NOTE = ("Held during the migration cutover and not sent (onerc_vmms_migrate). "
+	"Use Retry Sending in the Email Queue list to send it.")
+
+
+def held_mail() -> list:
+	"""Mail the queue would send at its next run. With email muted for the
+	cutover nothing leaves, but every row waits; Finish cutover unmutes and the
+	first scheduler run sends them all, however old."""
+	return frappe.get_all("Email Queue", filters={"status": ["in", HELD_STATUSES]},
+		fields=["name", "creation", "status", "reference_doctype", "reference_name", "sender"], order_by="creation asc")
+
+
+def plan_held_mail() -> dict:
+	rows = held_mail()
+	recipients = defaultdict(list)
+	for parent, recipient in frappe.db.sql("""select parent, recipient from `tabEmail Queue Recipient`
+		where parent in %s""", (tuple(row.name for row in rows) or ("",),)):
+		recipients[parent].append(recipient or "")
+	domains = Counter(address.rsplit("@", 1)[-1].lower() for people in recipients.values() for address in people if "@" in address)
+	return {
+		"summary": {
+			"held": len(rows),
+			"recipients": sum(len(people) for people in recipients.values()),
+			"by_reference": dict(Counter(row.reference_doctype or "(none)" for row in rows).most_common()),
+			"by_day": dict(sorted(Counter(str(row.creation)[:10] for row in rows).items())),
+			"recipient_domains": dict(domains.most_common(20)),
+		},
+		"details": {"held": [
+			{"email_queue": row.name, "queued_on": str(row.creation), "reference": f"{row.reference_doctype or ''} {row.reference_name or ''}".strip(),
+			 "recipients": len(recipients.get(row.name, ())), "sender": row.sender}
+			for row in rows[:DETAIL_ROWS]
+		]},
+		"todo": [row.name for row in rows],
+	}
+
+
+def apply_held_mail(plan, progress, quiet) -> dict:
+	set_aside = 0
+	for part in _chunks(plan["todo"]):
+		# Only rows still waiting: one sent since the plan was made stays sent.
+		frappe.db.sql("""update `tabEmail Queue` set status = 'Error', error = %s
+			where name in %s and status in %s""", (HELD_NOTE, tuple(part), HELD_STATUSES))
+		set_aside += len(part)
+	return {"set_aside": set_aside}
+
+
 PLANS = {
 	"system_manager": plan_system_manager,
 	"desk_access": plan_desk_access,
@@ -686,6 +1012,10 @@ PLANS = {
 	"approved_without_volunteer": plan_approved_without_volunteer,
 	"identity_numbers": plan_identity_numbers,
 	"life_memberships": plan_life_memberships,
+	"event_bookings": plan_event_bookings,
+	"approval_routing": plan_approval_routing,
+	"reviewer_notes": plan_reviewer_notes,
+	"held_mail": plan_held_mail,
 }
 APPLY = {
 	"system_manager": apply_system_manager,
@@ -695,6 +1025,10 @@ APPLY = {
 	"approved_without_volunteer": apply_approved_without_volunteer,
 	"identity_numbers": apply_identity_numbers,
 	"life_memberships": apply_life_memberships,
+	"event_bookings": apply_event_bookings,
+	"approval_routing": apply_approval_routing,
+	"reviewer_notes": apply_reviewer_notes,
+	"held_mail": apply_held_mail,
 }
 
 

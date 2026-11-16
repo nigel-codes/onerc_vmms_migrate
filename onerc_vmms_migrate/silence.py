@@ -88,16 +88,48 @@ def silenced(trusted=True):
 
 
 class Guard:
+	# Imported history may write these, and only rows linked to an HD Ticket:
+	# the old ticket's emails and assignments (helpdesk_load). Email Queue,
+	# Notification Log and SMS Log stay strict.
+	EXPECTABLE = {"Communication": "reference_doctype", "ToDo": "reference_type"}
+	EXPECTED_REFERENCE = "HD Ticket"
+
 	def __init__(self):
 		self.tables = [t for t in OUTBOX if frappe.db.table_exists(t)]
 		self.before = self._counts()
+		self.expected = {t: set() for t in self.EXPECTABLE}
 
 	def _counts(self) -> dict[str, int]:
 		return {t: frappe.db.count(t) for t in self.tables}
 
+	def expect(self, table, name) -> None:
+		"""A row the import itself inserted under this name. The caller adds it
+		only after historical.insert succeeded, which refuses a name already
+		taken, so an allowance can never cover a row anything else wrote."""
+		if table not in self.EXPECTABLE:
+			raise SilenceBreached(f"{table} rows cannot be allowed as imported history")
+		self.expected[table].add(name)
+
+	def _imported(self, table) -> int:
+		"""Expected rows that exist now; a rolled-back insert does not count."""
+		field, names, found = self.EXPECTABLE[table], sorted(self.expected[table]), 0
+		for start in range(0, len(names), 500):
+			rows = frappe.get_all(table, filters={"name": ["in", names[start : start + 500]]}, fields=["name", field])
+			foreign = [row["name"] for row in rows if row.get(field) != self.EXPECTED_REFERENCE]
+			if foreign:
+				raise SilenceBreached(f"an allowed {table} is not ticket history: {foreign[:5]}")
+			found += len(rows)
+		return found
+
 	def check(self) -> None:
 		after = self._counts()
-		grew = {t: after[t] - self.before[t] for t in self.tables if after[t] > self.before[t]}
+		grew = {}
+		for t in self.tables:
+			growth = after[t] - self.before[t]
+			if growth > 0 and self.expected.get(t):
+				growth -= self._imported(t)
+			if growth > 0:
+				grew[t] = growth
 		if grew:
 			raise SilenceBreached(f"a message was about to leave: {grew}")
 

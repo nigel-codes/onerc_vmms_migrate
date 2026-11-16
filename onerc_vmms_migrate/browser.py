@@ -390,13 +390,14 @@ def execute(token, action, user):
 
 
 @frappe.whitelist(methods=["POST"])
-def finish_cutover(confirmation: str = "") -> None:
+def finish_cutover(confirmation: str = "", send_held_mail: bool = False) -> None:
 	authorize()
 	assert_idle()
 	value = state()
 	original = value.get("cutover")
 	if not original:
 		frappe.throw("There is no migration cutover to finish.")
+	assert_no_held_mail(send_held_mail)
 	if confirmation != "RESTORE" and (
 		not value.get("reconciled")
 		or not (value.get("import_result") or {}).get("passed")
@@ -411,6 +412,23 @@ def finish_cutover(confirmation: str = "") -> None:
 	value.pop("cutover", None)
 	value["services_restored_after_failure"] = confirmation == "RESTORE"
 	save_state(value)
+
+
+def assert_no_held_mail(send_held_mail) -> None:
+	"""Muting holds mail in the queue rather than dropping it, and the first
+	scheduler run after the cutover sends all of it, however old. Finishing
+	waits until the operator has read it and chosen."""
+	from onerc_vmms_migrate.post_import_repairs import HELD_STATUSES, REPAIRS
+
+	if send_held_mail in (True, 1, "1", "true", "True"):
+		return
+	held = frappe.db.count("Email Queue", {"status": ["in", HELD_STATUSES]})
+	if held:
+		frappe.throw(
+			f"{held} emails were queued while email was held, and finishing the cutover would send them all. "
+			f"Read them in Preview repairs, then either apply \"{REPAIRS['held_mail']}\" or tick "
+			"\"Send the mail held during the cutover\" here."
+		)
 
 
 @frappe.whitelist(methods=["POST"])

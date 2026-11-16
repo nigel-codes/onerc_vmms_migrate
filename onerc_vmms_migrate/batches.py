@@ -137,6 +137,22 @@ def reference_failures(crosswalks):
 	return [{**row, "error": row["problem"]} for row in crosswalks.problems() if row["problem"] != "unmapped"]
 
 
+def withheld_records(built):
+	"""The old records the people release left out as a whole.
+
+	`not_migrated` also lists single field values (a ward, a skill) that stay in
+	the archive while their record comes across; those rows name the `field`.
+	Counting them here would hold back nearly every volunteer and account, and
+	with them their deployment requests, availability and the coordinators of
+	their deployments.
+	"""
+	return {
+		(row["source_doctype"], str(row["source_name"]))
+		for row in built.get("not_migrated", [])
+		if not row.get("field")
+	}
+
+
 def excluded_identities(snapshot, built):
 	from onerc_vmms_migrate import normalise
 	from onerc_vmms_migrate.placeholder_emails import login_email
@@ -147,10 +163,7 @@ def excluded_identities(snapshot, built):
 		for dt, name in bundle["sources"]
 		if dt != "User" and (bundle["errors"] or (dt == "Employee" and bundle.get("volunteer_excluded")))
 	}
-	snapshot["excluded_native_identities"].update(
-		(row["source_doctype"], str(row["source_name"]))
-		for row in built.get("not_migrated", [])
-	)
+	snapshot["excluded_native_identities"].update(withheld_records(built))
 	snapshot["excluded_native_identities"].update(
 		("User", r["name"])
 		for r in snapshot["users"].values()

@@ -12,7 +12,7 @@ from collections import Counter
 import frappe
 from frappe.utils import today
 
-from onerc_vmms_migrate import accounts, historical, load, run, workspace
+from onerc_vmms_migrate import accounts, batches, historical, load, run, workspace
 from onerc_vmms_migrate.crosswalk import Crosswalks
 from onerc_vmms_migrate.extract import extract
 from onerc_vmms_migrate.history_load import Loader, history_exclusion_counts, history_exclusions_accepted
@@ -99,7 +99,7 @@ def execute(confirm=None, limit=None, progress=None):
             snapshot['excluded_native_identities']={(dt,name) for b in bundles if b['errors'] for dt,name in b['sources'] if dt!='User'}
             snapshot['excluded_native_identities'].update(('User',row['source_name']) for row in excluded_accounts)
             snapshot['excluded_native_identities'].update((dt,name) for b in bundles if b.get('volunteer_excluded') for dt,name in b['sources'] if dt=='Employee')
-            snapshot['excluded_native_identities'].update((row['source_doctype'],str(row['source_name'])) for row in built.get('not_migrated',[]))
+            snapshot['excluded_native_identities'].update(batches.withheld_records(built))
             excluded_volunteers=[{'person':b['key'],'reason':'Multiple source volunteer records share an account'} for b in bundles if b.get('volunteer_excluded')]
             run._write_csv(report,'volunteer-source-exclusions.csv',excluded_volunteers)
             volunteer_total=sum(any(dt=='Employee' for dt,_ in b['sources']) for b in bundles)

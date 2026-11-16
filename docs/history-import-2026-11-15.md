@@ -54,6 +54,18 @@ A TOR stakeholder phone that is not a phone number follows the
 **drop invalid phones** setting, the same as people. With the setting off, that
 TOR is reported as not imported, and so are its deployments.
 
+## Who counts as left out (0.9.1, 16 November 2026)
+
+A record's history is held back only when the people release left the record
+out as a whole: the person was held for review, shared an account with other
+volunteer records, or had no usable email. A single old field that stays in the
+archive (a ward, a skill, a designation) no longer holds back its record. Before
+0.9.1 it did, and the production preview held back 2,630 of 4,694 deployment
+requests and every account for that reason alone.
+
+Run Import history only with 0.9.1 or later. A live import marks each held-back
+row Excluded in the archive, and later runs do not attempt those rows again.
+
 ## Operating
 
 1. Deploy. The site migration changes no records.

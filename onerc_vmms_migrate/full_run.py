@@ -12,7 +12,7 @@ from collections import Counter
 import frappe
 from frappe.utils import today
 
-from onerc_vmms_migrate import accounts, historical, load, run, workspace
+from onerc_vmms_migrate import accounts, batches, historical, load, run, workspace
 from onerc_vmms_migrate.crosswalk import Crosswalks
 from onerc_vmms_migrate.extract import extract
 from onerc_vmms_migrate.history_load import Loader, history_exclusion_counts, history_exclusions_accepted
@@ -99,7 +99,7 @@ def execute(confirm=None, limit=None, progress=None):
             snapshot['excluded_native_identities']={(dt,name) for b in bundles if b['errors'] for dt,name in b['sources'] if dt!='User'}
             snapshot['excluded_native_identities'].update(('User',row['source_name']) for row in excluded_accounts)
             snapshot['excluded_native_identities'].update((dt,name) for b in bundles if b.get('volunteer_excluded') for dt,name in b['sources'] if dt=='Employee')
-            snapshot['excluded_native_identities'].update((row['source_doctype'],str(row['source_name'])) for row in built.get('not_migrated',[]))
+            snapshot['excluded_native_identities'].update(batches.withheld_records(built))
             excluded_volunteers=[{'person':b['key'],'reason':'Multiple source volunteer records share an account'} for b in bundles if b.get('volunteer_excluded')]
             run._write_csv(report,'volunteer-source-exclusions.csv',excluded_volunteers)
             volunteer_total=sum(any(dt=='Employee' for dt,_ in b['sources']) for b in bundles)
@@ -300,12 +300,23 @@ def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
         if not terms or not frappe.db.get_value('VMMS Terms of Reference',terms,'legacy_unstructured_terms'):continue
         new_url=restore(url,'VMMS Terms of Reference',terms,True)
         if new_url:
-            # The native field is the one vmmsx shows staff as the TOR document;
-            # the legacy field keeps naming the original upload.
-            values={'legacy_terms_attachment':new_url}
-            if (frappe.get_meta('VMMS Terms of Reference').has_field('tor_attachment')
-                    and not frappe.db.get_value('VMMS Terms of Reference',terms,'tor_attachment')):
-                values['tor_attachment']=new_url
-            frappe.db.set_value('VMMS Terms of Reference',terms,values,update_modified=False)
-            report['native_fields_updated']+=1
+            fields=['legacy_terms_attachment']+(['tor_attachment'] if frappe.get_meta('VMMS Terms of Reference').has_field('tor_attachment') else [])
+            current=frappe.db.get_value('VMMS Terms of Reference',terms,fields,as_dict=True)
+            values=tor_attachment_values(new_url,current)
+            if values:
+                frappe.db.set_value('VMMS Terms of Reference',terms,values,update_modified=False)
+                report['native_fields_updated']+=1
     return report
+
+
+def tor_attachment_values(new_url,current):
+    """The TOR fields to write for a restored tool attachment; nothing when
+    they already hold it, so a second import reports no updates. The native
+    field is the one vmmsx shows staff as the TOR document and is only filled
+    when empty; the legacy field keeps naming the original upload."""
+    values={}
+    if current.get('legacy_terms_attachment')!=new_url:
+        values['legacy_terms_attachment']=new_url
+    if 'tor_attachment' in current and not current.get('tor_attachment'):
+        values['tor_attachment']=new_url
+    return values

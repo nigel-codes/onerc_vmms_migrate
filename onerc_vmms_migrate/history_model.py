@@ -42,6 +42,14 @@ class History:
     def get(self, doctype, name):
         return self.tables[doctype].get(name)
 
+    def rows_where(self, doctype, field, values):
+        """Rows whose field is one of values, without holding the whole table
+        (a captured Comment or Version table is too large for that)."""
+        if hasattr(self.store, 'rows_where'):
+            return list(self.store.rows_where(doctype, field, tuple(values)))
+        wanted = set(values)
+        return [row for row in self.tables[doctype].values() if row.get(field) in wanted]
+
     def children(self, doctype, name, field):
         if hasattr(self.store,'children'):
             return self.store.children(doctype,name,field)

@@ -13,11 +13,18 @@ import frappe
 
 from onerc_vmms_migrate import historical, normalise, presentation
 from onerc_vmms_migrate.crosswalk import Crosswalks, UNMAPPED, DROP
+from onerc_vmms_migrate.history_fields import OMIT
 from onerc_vmms_migrate.history_model import History, assignment_state, application_state, key, split_name
 from onerc_vmms_migrate.naming_continuity import NamingContinuity
 
 
-OWNER_DOCTYPES = {"Project", "Task", "VMMS Terms of Reference"}
+# Records that keep their old creator as owner. A deployment's owner is who
+# hears a volunteer's answer (vmmsx invitation.askers) and whose "mine" list
+# shows it; an event's is who made it.
+OWNER_DOCTYPES = {"Project", "Task", "VMMS Terms of Reference", "VMMS Deployment", "Buzz Event",
+                  # A ticket's raiser, an email's sender, a comment's author, an assigner.
+                  "HD Ticket", "Communication", "Comment", "HD Ticket Comment", "ToDo"}
+COORDINATOR_ROLE = "County Coordinator"
 
 
 class BatchBoundary(Exception):
@@ -341,7 +348,7 @@ class Loader:
         for row in projects:
             def build(r):
                 dates = ('expected_start_date', 'expected_end_date', 'actual_start_date', 'actual_end_date')
-                values=self.copy_values('Project',r,omit=('company','cost_center','customer','sales_order','project_template','users','department',*dates))
+                values=self.copy_values('Project',r,omit=OMIT['Project'])
                 if project_meta.has_field('vmms_geo_node'):
                     values['vmms_geo_node']=self.geo(r.get('company'))
                 if company:
@@ -363,7 +370,7 @@ class Loader:
             if not ready:ready=pending[:1]
             for row in ready:
                 def build(r):
-                    values=self.copy_values('Task',r,omit=('company','department','issue','depends_on','type','parent_task','lft','rgt','old_parent'))
+                    values=self.copy_values('Task',r,omit=OMIT['Task'])
                     if task_meta.has_field('department') and r.get('department'):
                         values['department'] = self.project_department("Task", r, company, abbreviation)
                     if r.get('project'):values['project']=self.target('Project',r['project'])
@@ -442,16 +449,42 @@ class Loader:
             return 'Expired'
         return state
 
-    def coordinator(self, doctype, row):
-        """The old tool's creator. One the destination cannot resolve (an
-        account that was not imported) leaves Administrator, reported, so the
-        deployment and its volunteers still come across."""
+    def coordinator(self, doctype, row, geo_node=None):
+        """The old tool's creator. When that account was not imported, the
+        county's one active County Coordinator (whom volunteers then see as
+        their contact); with none or several there, Administrator. Either
+        fallback is reported, so the deployment and its volunteers still come
+        across. A tool the old Administrator account made is treated the same
+        way: Administrator is nobody a volunteer can contact."""
         user = self.target('User', row.get('owner'), required=False)
-        if not user:
-            user = 'Administrator'
+        if user and user not in ('Administrator', 'Guest'):
+            return user
+        who = ('Coordinator '+str(row.get('owner'))+' was not imported' if not user
+               else 'Made by the old '+user+' account, which is not a person to contact')
+        held = self.county_coordinators(geo_node)
+        if len(held) == 1:
             self.warnings.append({'source_doctype': doctype, 'source_name': row.get('name'),
-                'warning': 'Coordinator '+str(row.get('owner'))+' was not imported; Administrator recorded'})
-        return user
+                'warning': who+'; county coordinator '+held[0]+' recorded'})
+            return held[0]
+        found = 'no County Coordinator' if not held else str(len(held))+' County Coordinators'
+        self.warnings.append({'source_doctype': doctype, 'source_name': row.get('name'),
+            'warning': who+' and its place has '+found+'; Administrator recorded'})
+        return 'Administrator'
+
+    def county_coordinators(self, geo_node):
+        """Active holders of the deployment scope role at exactly this place,
+        through vmmsx's own wrapper over core (no walking up, no subtree)."""
+        if not geo_node:
+            return []
+        cache = self.__dict__.setdefault('_county_coordinators', {})
+        if geo_node not in cache:
+            from vmmsx.approvals.services.routing import holders_exactly_at
+            role = (frappe.db.get_single_value('National Society Settings', 'vmms_deployment_scope_role')
+                    or COORDINATOR_ROLE)
+            people = holders_exactly_at(geo_node, role)
+            cache[geo_node] = sorted({p for p in people if p and p not in ('Administrator', 'Guest')
+                                      and frappe.db.get_value('User', p, 'enabled')})
+        return cache[geo_node]
 
     def terms(self):
         child_map={'stakeholders':('TOR Stakeholders','stakeholder'), 'objectives':('TOR Objectives','objective'),
@@ -540,16 +573,19 @@ class Loader:
                 else:
                     raise ValueError('Legacy deployment has neither structured terms nor an original terms document')
                 self.check_terms_project(source_project, terms)
+                place = self.geo(r.get('company'))
                 return {'title':self.deployment_title(r,terms),
-                    'terms_of_reference':terms,'geo_node':self.geo(r.get('company')),
-                    'coordinator':self.coordinator('Deployment Request Tool', r),
+                    'terms_of_reference':terms,'geo_node':place,
+                    'coordinator':self.coordinator('Deployment Request Tool', r, place),
                     'status':self.deployment_status(r.get('expected_start_date'), r.get('expected_end_date')),
                     'site_name':(r.get('location') or '').strip() or None,
                     'requires_contract':int(bool(int(r.get('require_contract_before_deployment') or 0))),
                     'volunteers_required':r.get('number_of_volunteers_required'),
                     'planned_start':r.get('expected_start_date'),'planned_end':r.get('expected_end_date'),
                     'start_date':normalise.date(r.get('expected_start_date')),'end_date':normalise.date(r.get('expected_end_date')),
-                    'notes':(r.get('notes') or '')+presentation.DEPLOYMENT_SUFFIX}
+                    # The old notes as written. The status comes from the dates,
+                    # so nothing is added about it.
+                    'notes':r.get('notes')}
             self.one('Deployment Request Tool',row,'VMMS Deployment',build,
                      validate_existing=self.validate_deployment)
         for row in self.history.rows('Personnel Deployment Request'):
@@ -571,10 +607,11 @@ class Loader:
                     if not frappe.db.exists('VMMS Deployment',name):
                         title_source = {**r, 'company': original['company'],
                                         'title': original.get('title_of_mission')}
+                        place = self.geo(original['company'])
                         historical.insert('VMMS Deployment',{'terms_of_reference':terms,
                             'title': self.deployment_title(title_source, terms),
-                            'geo_node':self.geo(original['company']),
-                            'coordinator':self.coordinator('Personnel Deployment Request', r),
+                            'geo_node':place,
+                            'coordinator':self.coordinator('Personnel Deployment Request', r, place),
                             'status':self.deployment_status(r.get('expected_start_date'), r.get('expected_end_date')),
                             'volunteers_required':1,'planned_start':r.get('expected_start_date'),
                             'planned_end':r.get('expected_end_date'),
@@ -593,6 +630,29 @@ class Loader:
             self.one('Personnel Deployment Request',row,'VMMS Deployment Assignment',build,
                      validate_existing=self.validate_assignment)
 
+    def event_times(self, r, values):
+        """The time zone label Buzz derives on save (the import does not save
+        through Buzz), and a warning for times Buzz would refuse on an edit.
+        The recorded dates and times themselves are kept as they are."""
+        from frappe.utils import get_datetime, time_diff_in_seconds
+        if values.get('time_zone') and values.get('start_date') and values.get('start_time'):
+            try:
+                from buzz.utils import get_time_zone_label
+                values['time_zone_label'] = get_time_zone_label(
+                    values['time_zone'], get_datetime(f"{values['start_date']} {values['start_time']}"))
+            except Exception as exc:
+                self.warn('Buzz Event', r, 'Time zone label not derived: '+str(exc))
+        start, end = values.get('start_time'), values.get('end_time')
+        same_day = not values.get('end_date') or str(values.get('end_date')) == str(values.get('start_date'))
+        if same_day and start and end:
+            try:
+                backwards = time_diff_in_seconds(str(end), str(start)) <= 0
+            except Exception:
+                backwards = False
+            if backwards:
+                self.warn('Buzz Event', r, 'End time '+str(end)+' is not after start time '+str(start)
+                          +' on the same day; kept as recorded. Buzz asks for a later end time when the event is next edited.')
+
     def events(self):
         if self.history.rows('Buzz Event') and 'buzz' not in frappe.get_installed_apps():
             raise ValueError('Install Buzz on the destination before rehearsing the full event migration.')
@@ -601,15 +661,23 @@ class Loader:
                 self.one(dt,row,dt,lambda r,dt=dt:self.copy_values(dt,r),name=row['name'])
         for row in self.history.rows('Buzz Event'):
             def build(r):
-                values=self.copy_values('Buzz Event',r,omit=('ticket_email_template','ticket_print_format','default_ticket_type'))
-                if r.get('company') and frappe.get_meta('Buzz Event').has_field('geo_node'):
-                    try:
-                        values['geo_node']=self.geo(r['company'])
-                    except ValueError as exc:
-                        self.warn('Buzz Event', r, str(exc))
+                values=self.copy_values('Buzz Event',r,omit=OMIT['Buzz Event'])
+                if r.get('company'):
+                    if frappe.get_meta('Buzz Event').has_field('geo_node'):
+                        try:
+                            values['geo_node']=self.geo(r['company'])
+                        except ValueError as exc:
+                            self.warn('Buzz Event', r, str(exc))
+                    else:
+                        self.warn('Buzz Event', r, 'Buzz Event has no geo_node field (run the vmmsx migrate); '
+                                  'branch '+str(r['company'])+' kept in the archive only')
                 if r.get('event_access') not in (None,'','Public'):
                     values['is_published']=0  # Never turn a restricted source event into a public event.
+                    if int(r.get('is_published') or 0):
+                        self.warn('Buzz Event', r, 'Old event access "'+str(r['event_access'])+'" has no equivalent in Buzz; '
+                                  'the published event came in unpublished')
                 values.update(send_booking_confirmation_email=0,send_ticket_email=0,auto_send_pitch_deck=0)
+                self.event_times(r, values)
                 return values
             self.one('Buzz Event',row,'Buzz Event',build,name=row['name'])
         for row in self.history.rows('Event Registration Question'):
@@ -633,7 +701,7 @@ class Loader:
                     invoices_by_booking.setdefault(original['event_booking'],[]).append(invoice)
         for row in self.history.rows('Event Booking'):
             def build(r):
-                values=self.copy_values('Event Booking',r,omit=('amended_from','coupon_code','payment_status','status','user'))
+                values=self.copy_values('Event Booking',r,omit=OMIT['Event Booking'])
                 attendees=[]
                 for child in self.history.children('Event Booking',r['name'],'attendees'):
                     a={f:child.get(f) for f in ('full_name','email','ticket_type','currency','amount','add_on_total','number_of_add_ons')}
@@ -660,7 +728,7 @@ class Loader:
             self.one('Event Booking',row,'Event Booking',build,name=row['name'])
         for row in self.history.rows('Event Ticket'):
             def build(r):
-                values=self.copy_values('Event Ticket',r,omit=('qr_code','amended_from'))
+                values=self.copy_values('Event Ticket',r,omit=OMIT['Event Ticket'])
                 values['first_name'],values['last_name']=split_name(r.get('attendee_name'))
                 if r.get('booking'):values['booking']=self.target('Event Booking',r['booking'])
                 return values
@@ -748,6 +816,11 @@ class Loader:
                         'activity_date':normalise.date(r.get('from_time')),'hours':r.get('hours'),
                         'notes':r.get('description') or r.get('activity_type')}
                 self.one('Timesheet Detail',child,'VMMS Time Log',build)
+
+    def helpdesk(self):
+        """Helpdesk tickets and their threads: see helpdesk_load."""
+        from onerc_vmms_migrate import helpdesk_load
+        helpdesk_load.run(self)
 
     def run(self):
         from onerc_vmms_migrate import workspace

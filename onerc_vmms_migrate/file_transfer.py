@@ -8,7 +8,9 @@ import frappe
 
 
 PERSONAL_OWNERS=frozenset({'User','Red Profile','VMMS Volunteer','VMMS Member','VMMS Membership',
-    'VMMS Volunteer Application','VMMS Deployment Assignment','VMMS Terms of Reference','Event Booking','Event Ticket'})
+    'VMMS Volunteer Application','VMMS Deployment Assignment','VMMS Terms of Reference','Event Booking','Event Ticket',
+    # A helpdesk ticket's files are a person's own evidence (40 were public on the old site).
+    'HD Ticket','Communication','Comment','HD Ticket Comment'})
 
 
 def required_privacy(doctype,source_private,explicit=None):

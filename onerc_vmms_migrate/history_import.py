@@ -28,11 +28,11 @@ from collections import Counter
 import frappe
 from frappe.utils import now_datetime, strip_html
 
-from onerc_vmms_migrate import historical, workspace
+from onerc_vmms_migrate import helpdesk_load, historical, workspace
 
 CONFIRMATION = "HISTORY"
 PAGE = 500
-METHODS = ("projects", "terms", "deployments", "events", "applications", "availability", "time_logs")
+METHODS = ("projects", "terms", "deployments", "events", "applications", "availability", "time_logs", "helpdesk")
 # Source doctypes the adapters convert. Child tables of these come along in the archive.
 CONVERTED = (
 	"Project",
@@ -63,6 +63,10 @@ PEOPLE_OWNED = ("Job Applicant",)
 NOT_CONVERTED = ("Shift Type", "Timesheet")
 # Shown first in every summary: what the person asked to import.
 CHAIN = ("Project", "Personnel Terms of Reference", "Deployment Request Tool", "Personnel Deployment Request")
+# Helpdesk tickets and their threads (0.10.0). Apart from CONVERTED because
+# Comment, Communication, ToDo and Version are whole tables in the capture:
+# only their ticket rows are in scope (helpdesk_load.SCOPE, scoped_rows).
+HELPDESK = helpdesk_load.CONVERTED
 
 
 def preview(progress=None) -> dict:
@@ -89,9 +93,23 @@ def validate_request(confirmation, backup_confirmed) -> None:
 	if not backup_confirmed:
 		frappe.throw("Confirm that you have a current database backup.")
 	_assert_people_in()
+	_assert_quiet_site()
 	capture = workspace.config().get("browser_capture")
 	if not _previewed(capture):
 		frappe.throw("Run Preview history with the selected capture first, and read its report.")
+
+
+def _assert_quiet_site() -> None:
+	"""The import runs while the cutover holds the scheduler and email. Once
+	jobs run again, their own messages would mix with the import's and its
+	outbox check would stop it part-way."""
+	from frappe.utils.scheduler import is_scheduler_disabled
+
+	from onerc_vmms_migrate.browser import state
+
+	if not state().get("cutover") and not is_scheduler_disabled(verbose=False):
+		frappe.throw("Import history before Finish cutover. Once the cutover is finished, "
+			"switch the scheduler off (System Settings) for the import.")
 
 
 def _run(kind, live, progress):
@@ -112,11 +130,13 @@ def _run(kind, live, progress):
 		snapshot = extract(source)
 		require_capture(snapshot)
 		excluded_identities(snapshot, build(snapshot, conf))
+		keep_imported_people(snapshot)
 		guard = Guard()
 		commit = _committer(guard, live)
 
 		report["archive"] = archive(snapshot, run_id, commit, progress)
 		loader = Loader(snapshot, run_id, source, conf, dry_run=not live)
+		loader.guard = guard  # allows the ticket emails and assignments it writes, nothing else
 		report["phase_errors"] = convert(loader, snapshot, live, commit, progress)
 		_report(progress, "files", 0, None)
 		report["files"] = files(snapshot, source, run_id, live)
@@ -125,6 +145,8 @@ def _run(kind, live, progress):
 
 		report["records"] = reconcile(snapshot, loader)
 		report["statuses"] = statuses(snapshot)
+		loader.field_drops = fields_not_imported(snapshot) + helpdesk_load.field_drops(snapshot)
+		report["fields_not_imported"] = len(loader.field_drops)
 	report["warnings"] = len(loader.warnings)
 	report["exclusions"] = len(_unique(loader.excluded))
 	report["failures"] = len(_unique(loader.failures))
@@ -155,7 +177,7 @@ def _committer(guard, live):
 def archived_doctypes(snapshot):
 	"""The converted doctypes and every child table they own."""
 	schemas = snapshot.get("schemas", {})
-	doctypes = [dt for dt in CONVERTED if dt in schemas]
+	doctypes = [dt for dt in CONVERTED + HELPDESK if dt in schemas] + helpdesk_load.archive_only(schemas)
 	for dt in [dt for dt in doctypes if dt not in PEOPLE_OWNED]:
 		for field in schemas[dt].get("fields", []):
 			child = field.get("options")
@@ -166,18 +188,35 @@ def archived_doctypes(snapshot):
 
 def archive(snapshot, run_id, commit, progress):
 	from onerc_vmms_migrate.history_model import History
+	from onerc_vmms_migrate.legacy_payments import TYPES as evidence
 
 	history = History(snapshot)
 	totals = Counter()
-	for dt in archived_doctypes(snapshot):
+	problems = []
+	# The old M-Pesa records are archived too, never converted or reconciled:
+	# archiving them keeps each one readable as a Legacy M-Pesa Payment. A page
+	# of them that will not archive is reported; it does not stop the history.
+	schemas = snapshot.get("schemas", {})
+	for dt in archived_doctypes(snapshot) + [dt for dt in evidence if dt in schemas]:
 		_report(progress, "archive", 0, None)
-		rows = [{"doctype": dt, "record": row} for row in history.rows(dt)]
+		rows = [{"doctype": dt, "record": row} for row in helpdesk_load.scoped_rows(history, dt)]
 		for start in range(0, len(rows), 1000):
-			done = historical.archive(snapshot, run_id, records=rows[start : start + 1000])
+			page = rows[start : start + 1000]
+			if dt in evidence:
+				frappe.db.savepoint("vmms_history_evidence")
+			try:
+				done = historical.archive(snapshot, run_id, records=page)
+			except Exception as exc:
+				if dt not in evidence:
+					raise
+				frappe.db.rollback(save_point="vmms_history_evidence")
+				totals["evidence_not_retained"] += len(page)
+				problems.append(f"{dt}: {strip_html(str(exc))[:200]}")
+				continue
 			totals.update({"created": done["created"], "reused": done["reused"]})
 			commit()
 		totals[dt] = len(rows)
-	return dict(totals)
+	return {**dict(totals), **({"evidence_problems": problems} if problems else {})}
 
 
 # 2. Convert -----------------------------------------------------------------
@@ -187,7 +226,7 @@ def converted_index(snapshot):
 	source_id = str(snapshot["source"].get("source_id") or snapshot["source"]["db_name"])
 	rows = frappe.get_all(
 		historical.ARCHIVE,
-		filters={"source_id": source_id, "conversion_status": "Converted", "source_doctype": ["in", CONVERTED]},
+		filters={"source_id": source_id, "conversion_status": "Converted", "source_doctype": ["in", CONVERTED + HELPDESK]},
 		fields=["source_doctype", "source_name", "target_name"],
 	)
 	return {(r.source_doctype, str(r.source_name)): r.target_name for r in rows}
@@ -240,23 +279,31 @@ def convert(loader, snapshot, live, commit, progress):
 
 def files(snapshot, source, run_id, live):
 	"""Attachments of the converted records, and nothing of the people's:
-	references to other doctypes are dropped before the copy."""
+	references to other doctypes, applicants' included (the people session
+	placed those on profiles), are dropped before the copy."""
 	from onerc_vmms_migrate import full_run
 	from onerc_vmms_migrate.history_model import History
 
-	parents = set(CONVERTED)
+	parents = set(CONVERTED + HELPDESK) - set(PEOPLE_OWNED)
+	history = History(snapshot)
+	# A ticket's emails and comments only, not every Communication's file.
+	in_scope = {dt: {str(r["name"]) for r in helpdesk_load.scoped_rows(history, dt)}
+		for dt in helpdesk_load.SCOPE if dt in snapshot.get("schemas", {})}
 	manifest = {}
 	for url, item in snapshot.get("all_file_manifest", snapshot.get("captured_file_manifest", {})).items():
-		references = [r for r in item.get("references") or [] if r.get("attached_to_doctype") in parents]
+		references = [r for r in item.get("references") or [] if r.get("attached_to_doctype") in parents
+			and str(r.get("attached_to_name")) in in_scope.get(r.get("attached_to_doctype"), (str(r.get("attached_to_name")),))]
 		if references:
 			manifest[url] = {**item, "references": references}
-	history = History(snapshot)
 	rows = {}
 	for dt in archived_doctypes(snapshot):
-		for row in history.rows(dt):
+		if dt in PEOPLE_OWNED:
+			continue
+		for row in helpdesk_load.scoped_rows(history, dt):
 			rows[f"{dt}\0{row['name']}"] = {"doctype": dt, "record": row}
 	part = {**snapshot, "history": rows, "users": {}, "all_file_manifest": manifest}
-	result = full_run.attachments(part, source, run_id, dry_run=not live, verify_manifest=True)
+	with helpdesk_load.quiet_attachment_comments():
+		result = full_run.attachments(part, source, run_id, dry_run=not live, verify_manifest=True)
 	result["files_considered"] = len(manifest)
 	return result
 
@@ -274,13 +321,17 @@ def reconcile(snapshot, loader):
 	excluded.update(loader.excluded_identities)
 	failed = Counter(r["source_doctype"] for r in _unique(loader.failures) if r.get("source_name") != "__phase__")
 	records = {}
-	for dt in CONVERTED:
+	archive_only = helpdesk_load.archive_only(snapshot.get("schemas", {}))
+	for dt in CONVERTED + HELPDESK + tuple(archive_only):
 		if dt in NOT_CONVERTED:
 			continue
-		rows = history.rows(dt)
+		rows = helpdesk_load.scoped_rows(history, dt)
 		if not rows:
 			continue
 		names = [str(row["name"]) for row in rows]
+		if dt in archive_only:
+			records[dt] = {"captured": len(names), "archived_only": len(names), "unaccounted": 0}
+			continue
 		done = sum((dt, name) in index for name in names)
 		out = sum((dt, name) in excluded and (dt, name) not in index for name in names)
 		counts = {"captured": len(names), "converted": done, "excluded": out, "not_imported": failed.get(dt, 0)}
@@ -317,9 +368,47 @@ def statuses(snapshot):
 	terms = targets("Personnel Terms of Reference")
 	return {
 		"deployments": count("VMMS Deployment", "status", deployments),
+		"coordinators": coordinators(deployments),
 		"requests": count("VMMS Deployment Assignment", "status", assignments),
 		"terms_active": count("VMMS Terms of Reference", "is_active", terms),
+		"events": event_reach(targets("Buzz Event"), targets("Event Booking")),
+		"helpdesk": helpdesk_load.statuses(targets),
 	}
+
+
+def coordinators(deployments):
+	"""Who volunteers will see as the contact on the imported deployments."""
+	if not deployments:
+		return {}
+	rows = frappe.get_all("VMMS Deployment", filters={"name": ["in", deployments]}, fields=["coordinator"])
+	administrator = sum(row.coordinator in (None, "", "Administrator") for row in rows)
+	return {"administrator": administrator, "a_person": len(rows) - administrator}
+
+
+def event_reach(events, bookings):
+	"""Whether the imported events reach the pages: published, placed, banners
+	a guest can see, and bookings that belong to an account (Buzz lists a
+	person's bookings by account, so an unclaimed one is invisible to them)."""
+	if not events and not bookings:
+		return {}
+	out = {}
+	if events:
+		rows = frappe.get_all("Buzz Event", filters={"name": ["in", events]},
+			fields=["is_published", "banner_image", "end_date", "start_date"]
+			+ (["geo_node"] if frappe.get_meta("Buzz Event").has_field("geo_node") else []))
+		today = str(frappe.utils.getdate())
+		published = [row for row in rows if row.is_published]
+		out.update({
+			"events_published": len(published),
+			"events_unpublished": len(rows) - len(published),
+			"events_without_place": sum(not row.get("geo_node") for row in rows),
+			"published_with_private_banner": sum(str(row.banner_image or "").startswith("/private/") for row in published),
+			"published_still_running": sum(str(row.end_date or row.start_date or "") >= today for row in published),
+		})
+	if bookings:
+		claimed = frappe.db.count("Event Booking", {"name": ["in", bookings], "user": ["is", "set"]})
+		out.update({"bookings_claimed": claimed, "bookings_unclaimed": len(bookings) - claimed})
+	return out
 
 
 # Reports --------------------------------------------------------------------
@@ -332,6 +421,17 @@ def _write(directory, report, loader):
 	run._write_csv(directory, "history-not-imported.csv", [_row(r) for r in _unique(loader.failures)])
 	run._write_csv(directory, "history-warnings.csv", [_row(r) for r in loader.warnings])
 	run._write_csv(directory, "history-excluded.csv", [_row(r) for r in _unique(loader.excluded)])
+	helpdesk_load.write_reports(directory, loader)
+	run._write_csv(directory, "history-fields-not-imported.csv", [_row(r) for r in getattr(loader, "field_drops", [])])
+
+
+def fields_not_imported(snapshot):
+	"""Old fields with values that the converted records do not carry. The
+	archive keeps them; this names each one (see history_fields)."""
+	from onerc_vmms_migrate.history_fields import destination_fields, field_drops
+	from onerc_vmms_migrate.history_model import History
+
+	return field_drops(History(snapshot), snapshot.get("schemas", {}), CONVERTED, destination_fields())
 
 
 def _unique(rows):
@@ -372,6 +472,22 @@ def _previewed(capture) -> bool:
 				if json.load(handle).get("capture") == capture:
 					return True
 	return False
+
+
+def keep_imported_people(snapshot) -> None:
+	"""Nobody the people session brought across is held back here.
+
+	The exclusion set is rebuilt from today's Settings and crosswalks. If those
+	differ from the people import's (field review switched off, a crosswalk row
+	edited), people who are already in would lose their deployment requests,
+	availability and tickets, and a live run marks those rows Excluded for good
+	on this capture.
+	"""
+	imported = {
+		(row.source_doctype, str(row.source_name))
+		for row in frappe.get_all("Legacy Migration Record", fields=["source_doctype", "source_name"])
+	}
+	snapshot["excluded_native_identities"] = set(snapshot.get("excluded_native_identities") or ()) - imported
 
 
 def _run_id(kind):

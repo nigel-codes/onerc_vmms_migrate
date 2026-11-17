@@ -7,7 +7,12 @@ const repair_choices = [
  ['waiting_applications', 'Put Hold and Replied applications back in review'],
  ['approved_without_volunteer', 'Make volunteers from approved applications that have none'],
  ['identity_numbers', 'File untyped 7–8 digit ID numbers as National ID'],
- ['life_memberships', 'Clear the end date on active life memberships']
+ ['life_memberships', 'Clear the end date on active life memberships'],
+ ['event_bookings', 'Link old event bookings to accounts that now exist'],
+ ['approval_routing', 'Queue imported waiting records with their current reviewers, without emailing them'],
+ ['reviewer_notes', 'Copy the comments reviewers left on old applications and memberships'],
+ ['original_creators', 'Give imported people records their original creator and dates'],
+ ['held_mail', 'Set aside mail queued during the cutover so it is not sent']
 ];
 const mapping_kinds = ['internet_access', 'motivation', 'disability_status', 'marital_status', 'citizenship', 'branch', 'residence', 'membership_type', 'volunteer_status', 'gender', 'identification_type', 'supporting_document', 'disability', 'language', 'skill', 'profession', 'education_level', 'driving_licence_class', 'licence_type', 'question'];
 
@@ -221,16 +226,24 @@ frappe.ui.form.on('VMMS Migration Settings', {
    }}); dialog.show();
   }, __('4. Cutover'));
   add('Reconcile imported records', 'reconcile', '4. Cutover');
-  frm.add_custom_button(__('Finish cutover'), () => frappe.confirm(__('Restore the target scheduler and email settings to their values before migration?'), async () => {
-   await frappe.call({method: migration_api + 'finish_cutover'}); migration_status(frm);
-  }), __('4. Cutover'));
+  const held_mail_choice = {fieldname: 'send_held_mail', fieldtype: 'Check', label: __('Send the mail held during the cutover')};
+  frm.add_custom_button(__('Finish cutover'), () => {
+   const finish = new frappe.ui.Dialog({title: __('Finish cutover'), fields: [
+    {fieldtype: 'HTML', options: '<p>Restore the target scheduler and email settings to their values before migration? Mail queued while email was held goes out at the first scheduler run. Read it in Preview repairs and set it aside with Apply repairs first, or tick the box to send it.</p>'},
+    held_mail_choice
+   ], primary_action_label: __('Finish cutover'), primary_action: async values => {
+    await frappe.call({method: migration_api + 'finish_cutover', args: {send_held_mail: values.send_held_mail === 1 || values.send_held_mail === true}});
+    finish.hide(); migration_status(frm);
+   }}); finish.show();
+  }, __('4. Cutover'));
   frm.add_custom_button(__('Restore services after failure'), () => {
    const recovery = new frappe.ui.Dialog({title: __('Restore target services'), fields: [
     {fieldtype: 'HTML', options: '<p>This restores the original scheduler and email settings even if migration is incomplete. It does not undo imported records. Review the failure reports and decide whether the target can reopen before proceeding.</p>'},
+    held_mail_choice,
     {fieldname: 'confirmation', fieldtype: 'Data', label: __('Type RESTORE to resume services'), reqd: 1}
-   ], primary_action_label: __('Restore services'), primary_action: async ({confirmation}) => {
+   ], primary_action_label: __('Restore services'), primary_action: async ({confirmation, send_held_mail}) => {
     if (confirmation !== 'RESTORE') { frappe.msgprint(__('Type RESTORE exactly.')); return; }
-    await frappe.call({method: migration_api + 'finish_cutover', args: {confirmation}});
+    await frappe.call({method: migration_api + 'finish_cutover', args: {confirmation, send_held_mail: send_held_mail === 1 || send_held_mail === true}});
     recovery.hide(); migration_status(frm);
    }}); recovery.show();
   }, __('4. Cutover'));

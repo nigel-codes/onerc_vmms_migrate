@@ -68,6 +68,22 @@ class TestHistorySourceGaps(TestCase):
 		)
 		self.assertIn(("Employee", "VOL-excluded"), snapshot["excluded_native_identities"])
 
+	def test_a_field_left_in_the_archive_does_not_hold_back_its_record(self):
+		snapshot = {"users": {}}
+		batches.excluded_identities(
+			snapshot,
+			{
+				"bundles": [],
+				"not_migrated": [
+					{"source_doctype": "Employee", "source_name": "VOL-1", "field": "ward", "reason": "Retained"},
+					{"source_doctype": "User", "source_name": "a@example.test", "field": "location", "reason": "Retained"},
+					{"source_doctype": "Volunteer Award Nomination", "source_name": "*", "field": "*", "count": 3},
+					{"source_doctype": "Employee", "source_name": "VOL-2", "reason": "volunteer has no usable email"},
+				],
+			},
+		)
+		self.assertEqual(snapshot["excluded_native_identities"], {("Employee", "VOL-2")})
+
 	def test_excluded_history_is_recorded_and_propagates_to_dependents(self):
 		loader = self.loader()
 		loader.run_id = "run"

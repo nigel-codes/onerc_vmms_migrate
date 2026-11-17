@@ -45,11 +45,24 @@ class TestPresentation(TestCase):
 			presentation.clean_notes("VMMS Deployment", old), source + presentation.DEPLOYMENT_SUFFIX
 		)
 		self.assertEqual(presentation.clean_notes("VMMS Deployment", source), source)
+		self.assertEqual(
+			presentation.clean_notes("VMMS Deployment", source + presentation.STATUS_DEPLOYMENT_SUFFIX), source
+		)
+		self.assertEqual(
+			presentation.clean_notes("VMMS Deployment", presentation.STATUS_ASSIGNMENT_NOTE),
+			presentation.ASSIGNMENT_NOTE,
+		)
 		self.assertEqual(presentation.clean_notes("VMMS Terms of Reference", presentation.OLD_TERMS_NOTE), "")
 		self.assertEqual(
 			presentation.clean_notes("VMMS Terms of Reference", "Imported medical equipment"),
 			"Imported medical equipment",
 		)
+
+	def test_nothing_volunteers_read_claims_the_status_was_not_recorded(self):
+		"""The status comes from the dates (decision, 15 Nov 2026), and volunteers
+		read a deployment's notes on their invitation."""
+		self.assertEqual(presentation.DEPLOYMENT_SUFFIX, "")
+		self.assertNotIn("not recorded", presentation.ASSIGNMENT_NOTE)
 
 
 class TestPresentationPatch(TestCase):

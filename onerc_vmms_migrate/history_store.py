@@ -72,6 +72,26 @@ class SQLiteHistory(Mapping):
                 "WHERE i.doctype='Version' AND i.name>? AND json_extract(r.payload,'$.record.ref_doctype') IN ("+slots+") "
                 "ORDER BY i.name LIMIT ?",(after,*types,int(size)))]
 
+    def rows_where(self,doctype,field,values):
+        """Rows of one doctype whose field is one of values, read in chunks."""
+        import re
+        from contextlib import closing
+        values=tuple(values)
+        if field in ('name','parent','parenttype','parentfield'):
+            column='i.'+field
+        elif re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',field):
+            column="json_extract(r.payload,'$.record."+field+"')"
+        else:
+            raise ValueError('Unsupported history field: '+str(field))
+        found=[]
+        with closing(self.connect()) as db:
+            for start in range(0,len(values),500):
+                chunk=values[start:start+500]
+                found+=[json.loads(row[0])['record'] for row in db.execute(
+                    "SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' "
+                    "WHERE i.doctype=? AND "+column+" IN ("+','.join('?' for _ in chunk)+") ORDER BY i.name",(doctype,*chunk))]
+        return found
+
     def children(self,doctype,name,field):
         with self.connect() as db:
             return [json.loads(row[0])['record'] for row in db.execute("SELECT r.payload FROM history_index i JOIN records r ON r.record_key=i.record_key AND r.dataset='history' WHERE i.parenttype=? AND i.parent=? AND i.parentfield=? ORDER BY i.idx,i.name",(doctype,name,field))]

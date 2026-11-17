@@ -11,6 +11,7 @@ const repair_choices = [
  ['event_bookings', 'Link old event bookings to accounts that now exist'],
  ['approval_routing', 'Queue imported waiting records with their current reviewers, without emailing them'],
  ['reviewer_notes', 'Copy the comments reviewers left on old applications and memberships'],
+ ['original_creators', 'Give imported people records their original creator and dates'],
  ['held_mail', 'Set aside mail queued during the cutover so it is not sent']
 ];
 const mapping_kinds = ['internet_access', 'motivation', 'disability_status', 'marital_status', 'citizenship', 'branch', 'residence', 'membership_type', 'volunteer_status', 'gender', 'identification_type', 'supporting_document', 'disability', 'language', 'skill', 'profession', 'education_level', 'driving_licence_class', 'licence_type', 'question'];

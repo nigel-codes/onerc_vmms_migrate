@@ -26,7 +26,10 @@ Added on 16 November 2026, for the history import and the end of the cutover:
 10. The comments reviewers left on old applications and memberships ("Kindly
    attach your documents") come across as the same comments on the records
    they became, with their author and date. Desk shows them on the record.
-11. Mail queued while the cutover held email is set aside (status Error, with
+11. Imported people records (accounts, profiles, volunteers, applications,
+   members and memberships) show who created them on the old site and when,
+   as an update of that site would, not the account that ran the import.
+12. Mail queued while the cutover held email is set aside (status Error, with
    the reason), so Finish cutover does not send it. Retry Sending in the Email
    Queue list sends any one of them deliberately.
 
@@ -46,7 +49,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 import frappe
-from frappe.utils import getdate, now_datetime, today
+from frappe.utils import get_datetime, getdate, now_datetime, today
 
 from onerc_vmms_migrate import silence, workspace
 
@@ -65,6 +68,7 @@ REPAIRS = {
 	"event_bookings": "Link old event bookings to accounts that now exist",
 	"approval_routing": "Queue imported waiting records with their current reviewers, without emailing them",
 	"reviewer_notes": "Copy the comments reviewers left on old applications and memberships",
+	"original_creators": "Give imported people records their original creator and dates",
 	"held_mail": "Set aside mail queued during the cutover so it is not sent",
 }
 ORDER = tuple(REPAIRS)
@@ -955,7 +959,143 @@ def apply_reviewer_notes(plan, progress, quiet) -> dict:
 	return {"comments_added": added}
 
 
-# --- 11. mail held by the cutover ----------------------------------------
+# --- 11. original creators and dates --------------------------------------
+
+ORIGIN_SOURCES = ("User", "Employee", "Job Applicant", "VM Member", "VM Membership")
+ORIGIN_TARGETS = ("User", "Red Profile", "VMMS Volunteer", "VMMS Volunteer Application", "VMMS Member", "VMMS Membership")
+STAMP = ("owner", "creation", "modified", "modified_by")
+PROFILE_LINKED = ("VMMS Volunteer", "VMMS Member", "VMMS Volunteer Application")
+
+
+def plan_original_creators() -> dict:
+	"""Who created each imported people record on the old site, and when.
+
+	The people import ran as the operator's account, so Desk says that account
+	created every volunteer, profile and membership on the day of the import.
+	The old record's creator and dates come back from the selected capture:
+
+	- a record made from several old records (one member from two old member
+	  records) takes the earliest creation and the latest change;
+	- a Red Profile has no old record of its own: it is the person, so it takes
+	  their first old record (account, volunteer, application or member);
+	- an old account is followed to the account it became here, the same rule
+	  the history import uses; one that is not on this site reads Administrator;
+	- the last change (modified, modified_by) goes back only on a record nobody
+	  has edited since the import (its last editor is still its importer).
+	  Anything a reviewer has done since keeps its date.
+	"""
+	ledger = frappe.db.sql("""select source_doctype, source_name, target_doctype, target_name
+		from `tabLegacy Migration Record` where target_doctype in %s""", (ORIGIN_TARGETS,))
+	wanted = defaultdict(set)
+	sources = defaultdict(list)
+	profiles = set()
+	for source_dt, source_name, target_dt, target_name in ledger:
+		if target_dt == "Red Profile":
+			profiles.add(target_name)
+		elif source_dt in ORIGIN_SOURCES:
+			wanted[source_dt].add(str(source_name))
+			sources[(target_dt, target_name)].append((source_dt, str(source_name)))
+	with _capture() as rows:
+		if rows is None:
+			return {"summary": {"error": "The selected capture has no history."}, "details": {}, "todo": []}
+		stamps = {}
+		for doctype in ORIGIN_SOURCES:
+			names = wanted.get(doctype)
+			for row in rows(doctype) if names else ():
+				if str(row.get("name")) in names:
+					stamps[(doctype, str(row["name"]))] = {field: row.get(field) for field in STAMP}
+	# A profile's old records are those of everything that hangs off it.
+	if profiles:
+		for name, user in frappe.db.sql("select name, user from `tabRed Profile` where ifnull(user, '') != ''"):
+			if name in profiles:
+				sources[("Red Profile", name)] += sources.get(("User", user), [])
+		for doctype in PROFILE_LINKED:
+			for name, profile in frappe.db.sql(f"select name, red_profile from `tab{doctype}` where ifnull(red_profile, '') != ''"):
+				if profile in profiles:
+					sources[("Red Profile", profile)] += sources.get((doctype, name), [])
+
+	accounts = dict(frappe.db.sql("""select source_name, target_name from `tabLegacy Migration Record`
+		where source_doctype = 'User' and target_doctype = 'User'"""))
+	present = set(_column("select name from tabUser"))
+	how = Counter()
+
+	def account(old):
+		if old in accounts:
+			how["the account it became here"] += 1
+			return accounts[old]
+		if old and old in present:
+			how["the same account here"] += 1
+			return old
+		how["Administrator (that account is not on this site)"] += 1
+		return "Administrator"
+
+	todo, outcomes, examples = [], Counter(), []
+	for doctype in ORIGIN_TARGETS:
+		names = [name for (target_dt, name) in sources if target_dt == doctype]
+		for part in _chunks(names):
+			for current in frappe.db.sql(f"""select name, owner, creation, modified, modified_by
+				from `tab{doctype}` where name in %s""", (tuple(part),), as_dict=True):
+				found = [stamps[key] for key in sources[(doctype, current.name)] if key in stamps]
+				change = original_stamp(found, current, account)
+				if change is None:
+					outcomes[f"{doctype}: old record not in the capture"] += 1
+				elif change:
+					outcomes[f"{doctype}: to restore" + ("" if "modified" in change else " (edited since: creator only)")] += 1
+					todo.append({"doctype": doctype, "name": current.name, "set": change})
+					if len(examples) < DETAIL_ROWS:
+						examples.append({"record": f"{doctype} {current.name}",
+							"now": f"{current.owner} {current.creation}", "becomes": f"{change.get('owner', current.owner)} {change.get('creation', current.creation)}"})
+				else:
+					outcomes[f"{doctype}: already right"] += 1
+	creators = Counter(item["set"].get("owner") for item in todo if item["set"].get("owner"))
+	return {
+		"summary": {**dict(sorted(outcomes.items())), "accounts_resolved_as": dict(how),
+			"most_common_creators_after": dict(creators.most_common(10))},
+		"details": {"examples": examples},
+		"todo": todo,
+	}
+
+
+def original_stamp(found, current, account) -> dict | None:
+	"""The fields to change on one record, {} when it is already right, or None
+	when none of its old records is in the capture."""
+	found = [row for row in found if row.get("creation")]
+	if not found:
+		return None
+	first = min(found, key=lambda row: str(row["creation"]))
+	last = max(found, key=lambda row: str(row.get("modified") or row["creation"]))
+	wanted = {"owner": account(first.get("owner")), "creation": first["creation"]}
+	if current.modified_by == current.owner:
+		wanted["modified"] = max(str(last.get("modified") or last["creation"]), str(first["creation"]))
+		wanted["modified_by"] = account(last.get("modified_by") or first.get("owner"))
+	return {field: value for field, value in wanted.items() if not _same(current.get(field), value)}
+
+
+def _same(now, wanted) -> bool:
+	if isinstance(wanted, str) and re.match(r"\d{4}-\d\d-\d\d \d\d:", wanted):
+		return now is not None and get_datetime(now) == get_datetime(wanted)
+	return now == wanted
+
+
+def apply_original_creators(plan, progress, quiet) -> dict:
+	"""Written straight to the columns: nothing is saved, so no hook, version
+	or message follows, and a later edit is not overwritten (see the plan)."""
+	restored = Counter()
+	for done, item in enumerate(plan["todo"], start=1):
+		fields = [field for field in STAMP if field in item["set"]]
+		assignments = ", ".join(f"`{field}` = %s" for field in fields)
+		frappe.db.sql(f"update `tab{item['doctype']}` set {assignments} where name = %s",
+			(*[item["set"][field] for field in fields], item["name"]))
+		restored[item["doctype"]] += 1
+		if done % 500 == 0:
+			_commit_page(quiet)
+			progress(done, len(plan["todo"]))
+	for doctype in restored:
+		frappe.clear_document_cache(doctype)
+	return {"restored": dict(restored)}
+
+
+# --- 12. mail held by the cutover ----------------------------------------
 
 HELD_STATUSES = ("Not Sent", "Partially Sent")
 HELD_NOTE = ("Held during the migration cutover and not sent (onerc_vmms_migrate). "
@@ -1015,6 +1155,7 @@ PLANS = {
 	"event_bookings": plan_event_bookings,
 	"approval_routing": plan_approval_routing,
 	"reviewer_notes": plan_reviewer_notes,
+	"original_creators": plan_original_creators,
 	"held_mail": plan_held_mail,
 }
 APPLY = {
@@ -1028,6 +1169,7 @@ APPLY = {
 	"event_bookings": apply_event_bookings,
 	"approval_routing": apply_approval_routing,
 	"reviewer_notes": apply_reviewer_notes,
+	"original_creators": apply_original_creators,
 	"held_mail": apply_held_mail,
 }
 

@@ -1,6 +1,7 @@
 """Post-import repairs: the rules that need no database. Behaviour on records is
 rehearsed against a migrated clone, inside a transaction that is rolled back."""
 
+import datetime
 import os
 import re
 from unittest import TestCase
@@ -306,3 +307,41 @@ class TestReviewerNotes(TestCase):
 		self.assertEqual((row["name"], row["comment_type"], row["reference_doctype"], row["reference_name"]),
 			("c1", "Comment", repairs.APPLICATION, "VAPP-1"))
 		self.assertEqual((row["owner"], row["creation"], row["content"]), ("old@x.org", note["creation"], note["content"]))
+
+
+class TestOriginalCreators(TestCase):
+	"""Imported people records read as the old site had them, not as the
+	account that ran the import."""
+
+	@staticmethod
+	def account(old):
+		return {"old@x.org": "new@x.org"}.get(old, old if old in ("Guest", "Administrator", "kept@x.org") else "Administrator")
+
+	@staticmethod
+	def current(**values):
+		return frappe._dict({"owner": "operator@x.org", "creation": datetime.datetime(2026, 11, 9, 21, 7, 7),
+			"modified": datetime.datetime(2026, 11, 16, 12, 10), "modified_by": "operator@x.org", **values})
+
+	def test_an_untouched_record_takes_its_old_creator_and_dates(self):
+		old = {"owner": "kept@x.org", "creation": "2025-01-02 10:00:00.000000", "modified": "2025-03-04 10:00:00.000000", "modified_by": "old@x.org"}
+		self.assertEqual(repairs.original_stamp([old], self.current(), self.account), {
+			"owner": "kept@x.org", "creation": "2025-01-02 10:00:00.000000",
+			"modified": "2025-03-04 10:00:00.000000", "modified_by": "new@x.org"})
+
+	def test_a_record_edited_since_the_import_keeps_its_last_change(self):
+		old = {"owner": "kept@x.org", "creation": "2025-01-02 10:00:00", "modified": "2025-03-04 10:00:00", "modified_by": "kept@x.org"}
+		change = repairs.original_stamp([old], self.current(modified_by="reviewer@x.org"), self.account)
+		self.assertEqual(set(change), {"owner", "creation"})
+
+	def test_the_first_old_record_is_the_origin_and_a_creator_not_here_reads_administrator(self):
+		rows = [{"owner": "kept@x.org", "creation": "2025-01-01 08:00:00", "modified": "2025-06-01 08:00:00", "modified_by": "Guest"},
+			{"owner": "gone@x.org", "creation": "2024-05-01 08:00:00", "modified": "2024-05-01 08:00:00", "modified_by": "gone@x.org"}]
+		change = repairs.original_stamp(rows, self.current(), self.account)
+		self.assertEqual((change["owner"], change["creation"]), ("Administrator", "2024-05-01 08:00:00"))
+		self.assertEqual((change["modified"], change["modified_by"]), ("2025-06-01 08:00:00", "Guest"))
+
+	def test_a_record_already_right_needs_nothing_and_one_without_old_records_is_reported(self):
+		old = {"owner": "kept@x.org", "creation": "2025-01-02 10:00:00", "modified": "2025-01-02 10:00:00", "modified_by": "kept@x.org"}
+		current = frappe._dict(owner="kept@x.org", creation=datetime.datetime(2025, 1, 2, 10), modified=datetime.datetime(2025, 1, 2, 10), modified_by="kept@x.org")
+		self.assertEqual(repairs.original_stamp([old], current, self.account), {})
+		self.assertIsNone(repairs.original_stamp([], current, self.account))

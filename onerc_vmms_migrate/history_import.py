@@ -28,7 +28,8 @@ from collections import Counter
 import frappe
 from frappe.utils import now_datetime, strip_html
 
-from onerc_vmms_migrate import helpdesk_load, historical, workspace
+from onerc_vmms_migrate import helpdesk_load, historical, history_inputs, workspace
+from onerc_vmms_migrate.browser_source import SnapshotSource
 
 CONFIRMATION = "HISTORY"
 PAGE = 500
@@ -121,16 +122,24 @@ def _run(kind, live, progress):
 	from onerc_vmms_migrate.source import Source
 
 	conf = workspace.config()
-	run_id = _run_id(kind)
-	directory = workspace.report_dir(run_id)
 	started = time.monotonic()
 	report = {"kind": kind, "started_at": str(now_datetime()), "capture": conf.get("browser_capture")}
 	_report(progress, "reading the capture", 0, None)
-	with Source(conf) as source, silenced():
+	inputs = history_inputs.load(conf) if conf.get("browser_capture") else None
+	with (Source(conf) if inputs is None else SnapshotSource(conf, inputs)) as source, silenced():
 		snapshot = extract(source)
 		require_capture(snapshot)
-		excluded_identities(snapshot, build(snapshot, conf))
+		if inputs is None:
+			excluded_identities(snapshot, build(snapshot, conf))
 		keep_imported_people(snapshot)
+		if inputs is None and conf.get("browser_capture") and history_inputs.usable(snapshot):
+			# The whole capture is in memory now. Keep what the history needs
+			# and leave the run to a fresh job (browser.execute), which reads
+			# only that.
+			history_inputs.save(conf, snapshot)
+			return {"prepared": True, "held_back": len(snapshot["excluded_native_identities"])}
+		run_id = _run_id(kind)
+		directory = workspace.report_dir(run_id)
 		guard = Guard()
 		commit = _committer(guard, live)
 
@@ -138,6 +147,7 @@ def _run(kind, live, progress):
 		loader = Loader(snapshot, run_id, source, conf, dry_run=not live)
 		loader.guard = guard  # allows the ticket emails and assignments it writes, nothing else
 		report["phase_errors"] = convert(loader, snapshot, live, commit, progress)
+		_release(loader)
 		_report(progress, "files", 0, None)
 		report["files"] = files(snapshot, source, run_id, live)
 		commit()
@@ -160,6 +170,18 @@ def _run(kind, live, progress):
 		"statuses": report["statuses"],
 		"phase_errors": report["phase_errors"],
 	}
+
+
+def _release(loader):
+	"""The converted tables the adapters read, and the ledger index of the
+	last page, are not used after the convert. The files and the reconcile
+	read their own."""
+	tables = getattr(loader.history, "tables", None)
+	if isinstance(getattr(tables, "cache", None), dict):
+		tables.cache.clear()
+	if isinstance(getattr(loader.history, "_helpdesk_scope", None), dict):
+		loader.history._helpdesk_scope.clear()
+	loader.converted_index = {}
 
 
 def _committer(guard, live):

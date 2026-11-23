@@ -214,24 +214,59 @@ def start(
 		)
 		value.pop("progress", None)
 		value.pop("progress_updated_at", None)
+		value.pop("continued", None)
 		if action != "capture":
 			value.pop("transfer", None)
 		if action == "repairs_apply":
 			value["repairs_selected"] = repairs
 		save_state(value)
-		frappe.enqueue(
-			"onerc_vmms_migrate.browser.execute",
-			queue=frappe.conf.get("onerc_vmms_migrate_queue") or "long",
-			timeout=18000,
-			job_id=token,
-			token=token,
-			action=action,
-			user=frappe.session.user,
-		)
+		_enqueue(token, action, frappe.session.user)
 	except Exception:
 		frappe.cache.delete(lock_key())
 		raise
 	return {"job_id": token}
+
+
+def _enqueue(token, action, user):
+	frappe.enqueue(
+		"onerc_vmms_migrate.browser.execute",
+		queue=frappe.conf.get("onerc_vmms_migrate_queue") or "long",
+		timeout=18000,
+		job_id=token,
+		token=token,
+		action=action,
+		user=user,
+	)
+
+
+def _continue(action, user):
+	"""Queue the same action again as a new job, for a run that stopped on
+	purpose to start afresh (history_inputs). The request was confirmed when
+	the first job was queued; nothing else may have taken the lock since."""
+	token = uuid.uuid4().hex
+	if not frappe.cache.set(lock_key(), token, nx=True, ex=21600):
+		return
+	try:
+		value = state()
+		value.update(
+			{
+				"action": action,
+				"job_id": token,
+				"status": "queued",
+				"started_by": user,
+				"started_at": str(now_datetime()),
+				"error": None,
+				"result": None,
+				"continued": True,
+			}
+		)
+		value.pop("progress", None)
+		value.pop("progress_updated_at", None)
+		save_state(value)
+		_enqueue(token, action, user)
+	except Exception:
+		frappe.cache.delete(lock_key())
+		raise
 
 
 
@@ -277,6 +312,7 @@ def execute(token, action, user):
 	if frappe.cache.get(lock_key()) != token.encode():
 		return
 	value = state()
+	again = False
 	try:
 		frappe.set_user(user)
 		authorize()  # Revoked access must also prevent a queued job from running.
@@ -365,6 +401,10 @@ def execute(token, action, user):
 				}
 			if action == "reconcile":
 				value["reconciled"] = not result.get("mismatches") and bool(result.get("people_checked"))
+			# Once: a job queued this way that prepares again stops, rather than
+			# queueing itself for ever.
+			again = action in ("history_preview", "history_import") and bool((result or {}).get("prepared")) \
+				and not value.get("continued")
 		value.update({"status": "finished", "result": result, "finished_at": str(now_datetime())})
 	except Exception as exc:
 		frappe.db.rollback()
@@ -387,6 +427,8 @@ def execute(token, action, user):
 		save_state(value)
 		if frappe.cache.get(lock_key()) == token.encode():
 			frappe.cache.delete(lock_key())
+	if again:
+		_continue(action, user)
 
 
 @frappe.whitelist(methods=["POST"])

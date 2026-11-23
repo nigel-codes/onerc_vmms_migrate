@@ -104,6 +104,16 @@ row Excluded in the archive, and later runs do not attempt those rows again.
    the cutover is finished and the scheduler runs. Confirm the backup and type `HISTORY`. It runs on the
    long worker and writes the same reports. A stopped run is simply started
    again, and it skips what is already in.
+
+   Since 0.10.2 the first run (Preview or Import) of a capture works out who
+   the people session held back, which needs the whole capture in memory
+   (about a gigabyte), saves that with the small part of the capture the
+   history reads (`captures/<id>/history-inputs.json`), and queues the same
+   action again as a new job. That job, and every later run, reads only the
+   saved part: on kenyaclone 180 MB to start instead of 790 MB, about 600 MB
+   at the most instead of 1.1 GB, with the same reports. A change to the
+   capture, the settings, the crosswalks, the code or the people ledger works
+   it out again.
 5. Fix the causes in `history-not-imported.csv`, then run Import history again.
    Only what is left is attempted.
 

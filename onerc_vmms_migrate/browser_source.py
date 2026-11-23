@@ -287,12 +287,18 @@ def capture(settings, capture_id):
 
 
 class SnapshotSource:
-	def __init__(self, conf):
+	def __init__(self, conf, data=None):
+		"""`data` is a capture already read (history_inputs): the snapshot file
+		is not read again, nor are the login hashes, which only the people
+		session uses."""
 		capture_id = conf.get("browser_capture")
 		if not capture_id or not capture_id.replace("-", "").isalnum():
 			raise SourceError("Capture the old site's data in Migration Settings first.")
-		with open(workspace.path("captures", capture_id, "snapshot.json")) as handle:
-			self.data = json.load(handle)
+		if data is None:
+			with open(workspace.path("captures", capture_id, "snapshot.json")) as handle:
+				self.data = json.load(handle)
+		else:
+			self.data = data
 		if self.data.get("history_storage"):
 			from onerc_vmms_migrate.history_store import SQLiteHistory
 			from onerc_vmms_migrate.bulk_source import sha256_file
@@ -305,7 +311,7 @@ class SnapshotSource:
 		self.site_path = self.data["source"]["site_path"]
 		if conf.get("preserve_passwords") and not self.data["source"].get("logins", {}).get("included"):
 			raise SourceError("This capture does not preserve existing passwords. Take a fresh protected login capture before importing.")
-		if self.data["source"].get("logins", {}).get("included"):
+		if data is None and self.data["source"].get("logins", {}).get("included"):
 			from onerc_vmms_migrate.logins import load_capture
 
 			directory = os.path.dirname(workspace.path("captures", capture_id, "snapshot.json"))

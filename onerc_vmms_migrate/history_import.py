@@ -19,6 +19,10 @@ reported and the run goes on: the operator reads history-not-imported.csv,
 fixes the cause and runs Import again, which picks up only what is left.
 Nothing is sent: everything runs silenced, and a page that would leave a
 message behind stops the run before it commits.
+
+Import runs between the server's 4-minute marks (marks.py, 0.10.3): it stops
+at a commit before each mark and a new job carries on from the place it kept
+(history_progress.py), with the same pages and the same report.
 """
 
 import os
@@ -28,11 +32,20 @@ from collections import Counter
 import frappe
 from frappe.utils import now_datetime, strip_html
 
-from onerc_vmms_migrate import helpdesk_load, historical, history_inputs, workspace
+from onerc_vmms_migrate import helpdesk_load, historical, history_inputs, history_progress, marks, workspace
 from onerc_vmms_migrate.browser_source import SnapshotSource
 
 CONFIRMATION = "HISTORY"
 PAGE = 500
+# Seconds before the next mark a unit of work needs to start (marks.py). The
+# first run of a capture reads all of it and builds the people in one go
+# (about 100 s on the hosted server), so it takes a whole stretch. A later job
+# reads the small inputs and stops at any commit. The files and the report
+# are single units.
+PREPARE_NEEDS = marks.SPAN
+STRETCH_NEEDS = 120
+FILES_NEEDS = 120
+REPORT_NEEDS = 90
 METHODS = ("projects", "terms", "deployments", "events", "applications", "availability", "time_logs", "helpdesk")
 # Source doctypes the adapters convert. Child tables of these come along in the archive.
 CONVERTED = (
@@ -122,37 +135,75 @@ def _run(kind, live, progress):
 	from onerc_vmms_migrate.source import Source
 
 	conf = workspace.config()
+	capture = conf.get("browser_capture")
+	# Before anything is read, so the waiting job stays as small as its worker.
+	marks.wait(STRETCH_NEEDS if live and history_inputs.exists(capture) else PREPARE_NEEDS,
+		lambda seconds: _report(progress, "waiting for the 4-minute mark", 0, None))
 	started = time.monotonic()
-	report = {"kind": kind, "started_at": str(now_datetime()), "capture": conf.get("browser_capture")}
+	report = {"kind": kind, "started_at": str(now_datetime()), "capture": capture}
 	_report(progress, "reading the capture", 0, None)
-	inputs = history_inputs.load(conf) if conf.get("browser_capture") else None
+	inputs = history_inputs.load(conf) if capture else None
 	with (Source(conf) if inputs is None else SnapshotSource(conf, inputs)) as source, silenced():
 		snapshot = extract(source)
 		require_capture(snapshot)
 		if inputs is None:
 			excluded_identities(snapshot, build(snapshot, conf))
 		keep_imported_people(snapshot)
-		if inputs is None and conf.get("browser_capture") and history_inputs.usable(snapshot):
+		if inputs is None and capture and history_inputs.usable(snapshot):
 			# The whole capture is in memory now. Keep what the history needs
 			# and leave the run to a fresh job (browser.execute), which reads
 			# only that.
 			history_inputs.save(conf, snapshot)
 			return {"prepared": True, "held_back": len(snapshot["excluded_native_identities"])}
 		run_id = _run_id(kind)
+		steps = None
+		if live:
+			place = history_progress.begin(kind, capture, history_inputs.key() if capture else None, run_id)
+			run_id = place["run_id"]
+			report["started_at"] = place["started_at"]
+			steps = Steps(place, marks.Window())
 		directory = workspace.report_dir(run_id)
 		guard = Guard()
 		commit = _committer(guard, live)
+		reached = history_progress.PHASES.index(steps.place["phase"]) if steps else 0
 
-		report["archive"] = archive(snapshot, run_id, commit, progress)
-		loader = Loader(snapshot, run_id, source, conf, dry_run=not live)
-		loader.guard = guard  # allows the ticket emails and assignments it writes, nothing else
-		report["phase_errors"] = convert(loader, snapshot, live, commit, progress)
-		_release(loader)
-		_report(progress, "files", 0, None)
-		report["files"] = files(snapshot, source, run_id, live)
-		commit()
-		guard.check()
+		try:
+			with marks.stop_on_term(steps.window if steps else None):
+				if reached == 0:
+					report["archive"] = archive(snapshot, run_id, commit, progress, steps)
+					if steps:
+						steps.keep(phase="convert", archive_result=report["archive"])
+				else:
+					report["archive"] = steps.place["archive_result"]
+				loader = Loader(snapshot, run_id, source, conf, dry_run=not live)
+				loader.guard = guard  # allows the ticket emails and assignments it writes, nothing else
+				broken, pages = history_progress.restore(loader, steps.place["loader"] if steps else None)
+				if reached <= 1:
+					broken = convert(loader, snapshot, live, commit, progress, steps, broken, pages)
+				report["phase_errors"] = broken
+			_release(loader)
+			if reached <= 2:
+				if steps:
+					steps.check(FILES_NEEDS)
+				_report(progress, "files", 0, None)
+				report["files"] = files(snapshot, source, run_id, live)
+				commit()
+				guard.check()
+				if steps:
+					steps.keep(phase="report", files=report["files"])
+			else:
+				report["files"] = steps.place["files"]
+			if steps:
+				steps.check(REPORT_NEEDS)
+		except StepAside:
+			return {
+				"stepped_aside": True,
+				"phase": steps.place["phase"],
+				"jobs": steps.place["slices"],
+				"marker": history_progress.marker(steps.place),
+			}
 
+		_report(progress, "report", 0, None)
 		report["records"] = reconcile(snapshot, loader)
 		report["statuses"] = statuses(snapshot)
 		loader.field_drops = fields_not_imported(snapshot) + helpdesk_load.field_drops(snapshot)
@@ -160,9 +211,15 @@ def _run(kind, live, progress):
 	report["warnings"] = len(loader.warnings)
 	report["exclusions"] = len(_unique(loader.excluded))
 	report["failures"] = len(_unique(loader.failures))
-	report["seconds"] = round(time.monotonic() - started)
+	if steps:
+		report["seconds"] = round(time.time() - steps.place["started"])
+		report["jobs"] = steps.place["slices"]
+	else:
+		report["seconds"] = round(time.monotonic() - started)
 	report["finished_at"] = str(now_datetime())
 	_write(directory, report, loader)
+	if steps:
+		history_progress.forget()
 	return {
 		"report": os.path.basename(directory) + "/history-summary.json",
 		"not_imported": report["failures"],
@@ -170,6 +227,25 @@ def _run(kind, live, progress):
 		"statuses": report["statuses"],
 		"phase_errors": report["phase_errors"],
 	}
+
+
+class StepAside(Exception):
+	"""A live run stopped at a commit to let a mark pass (marks.py)."""
+
+
+class Steps:
+	"""A live run's place, kept after each commit, and the stretch it runs in."""
+
+	def __init__(self, place, window):
+		self.place, self.window = place, window
+
+	def keep(self, **changes):
+		self.place.update(changes)
+		history_progress.save(self.place)
+
+	def check(self, need=0):
+		if not self.window.allows(need):
+			raise StepAside
 
 
 def _release(loader):
@@ -208,21 +284,24 @@ def archived_doctypes(snapshot):
 	return doctypes
 
 
-def archive(snapshot, run_id, commit, progress):
+def archive(snapshot, run_id, commit, progress, steps=None):
 	from onerc_vmms_migrate.history_model import History
 	from onerc_vmms_migrate.legacy_payments import TYPES as evidence
 
 	history = History(snapshot)
-	totals = Counter()
-	problems = []
+	place = steps.place["archive"] if steps else {"index": 0, "start": 0, "totals": {}, "problems": []}
+	totals = Counter(place["totals"])
+	problems = list(place["problems"])
 	# The old M-Pesa records are archived too, never converted or reconciled:
 	# archiving them keeps each one readable as a Legacy M-Pesa Payment. A page
 	# of them that will not archive is reported; it does not stop the history.
 	schemas = snapshot.get("schemas", {})
-	for dt in archived_doctypes(snapshot) + [dt for dt in evidence if dt in schemas]:
+	for index, dt in enumerate(archived_doctypes(snapshot) + [dt for dt in evidence if dt in schemas]):
+		if index < place["index"]:
+			continue  # archived by an earlier job of this run
 		_report(progress, "archive", 0, None)
 		rows = [{"doctype": dt, "record": row} for row in helpdesk_load.scoped_rows(history, dt)]
-		for start in range(0, len(rows), 1000):
+		for start in range(place["start"] if index == place["index"] else 0, len(rows), 1000):
 			page = rows[start : start + 1000]
 			if dt in evidence:
 				frappe.db.savepoint("vmms_history_evidence")
@@ -237,6 +316,9 @@ def archive(snapshot, run_id, commit, progress):
 				continue
 			totals.update({"created": done["created"], "reused": done["reused"]})
 			commit()
+			if steps:
+				steps.keep(archive={"index": index, "start": start + 1000, "totals": dict(totals), "problems": problems})
+				steps.check()
 		totals[dt] = len(rows)
 	return {**dict(totals), **({"evidence_problems": problems} if problems else {})}
 
@@ -254,17 +336,21 @@ def converted_index(snapshot):
 	return {(r.source_doctype, str(r.source_name)): r.target_name for r in rows}
 
 
-def convert(loader, snapshot, live, commit, progress):
+def convert(loader, snapshot, live, commit, progress, steps=None, broken=None, pages=0):
 	"""Pages through the adapters. Each page replays them in dependency order:
 	converted records are skipped through the ledger, failed ones through the
-	run's own list, so every page only spends its allowance on new records."""
+	run's own list, so every page only spends its allowance on new records.
+
+	A job that carries on a run gets that run's lists back (history_progress)
+	before its first page, so it skips what the run skipped."""
 	from onerc_vmms_migrate.history_load import BatchBoundary
 	from onerc_vmms_migrate.silence import SilenceBreached
 
 	loader.naming.dry_run = not live
-	loader.skip_identities = set()
-	loader.validated = set()
-	broken = {}
+	loader.skip_identities = {(row["source_doctype"], str(row["source_name"])) for row in loader.failures}
+	if getattr(loader, "validated", None) is None:
+		loader.validated = set()
+	broken = dict(broken or {})
 	page = PAGE if live else 10**9
 	while True:
 		loader.batch_limit, loader.batch_deadline = page, time.monotonic() + 3600
@@ -292,8 +378,14 @@ def convert(loader, snapshot, live, commit, progress):
 		)
 		commit()
 		_report(progress, "convert", len(loader.converted_index), None)
+		pages += 1
+		if steps:
+			steps.keep(phase="files" if complete else "convert",
+				loader=history_progress.loader_state(loader, broken, pages))
 		if complete:
 			return broken
+		if steps:
+			steps.check()
 
 
 # 3. Files -------------------------------------------------------------------

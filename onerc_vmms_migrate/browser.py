@@ -214,7 +214,8 @@ def start(
 		)
 		value.pop("progress", None)
 		value.pop("progress_updated_at", None)
-		value.pop("continued", None)
+		for item in ("continued", "prepared_once", "jobs", "stalls", "last_marker"):
+			value.pop(item, None)
 		if action != "capture":
 			value.pop("transfer", None)
 		if action == "repairs_apply":
@@ -239,10 +240,42 @@ def _enqueue(token, action, user):
 	)
 
 
+HISTORY_JOBS = 400  # about a day of 4-minute stretches
+HISTORY_STALLS = 3
+
+
+def _carry_on(value, result):
+	"""Whether a history job's result asks for a new job: it saved the small
+	inputs (history_inputs), or it stood aside for a mark (marks.py).
+
+	Once only after saving the inputs: a job queued that way that prepares
+	again stops, rather than queueing itself for ever. A run that stands
+	aside three times without getting any further stops with its place kept."""
+	result = result or {}
+	if result.get("prepared"):
+		if value.get("prepared_once"):
+			return False
+		value["prepared_once"] = True
+		return True
+	if not result.get("stepped_aside"):
+		return False
+	marker = result.get("marker")
+	stalls = int(value.get("stalls") or 0) + 1 if marker == value.get("last_marker") else 0
+	jobs = int(value.get("jobs") or 0) + 1
+	value.update({"jobs": jobs, "stalls": stalls, "last_marker": marker})
+	if stalls >= HISTORY_STALLS or jobs >= HISTORY_JOBS:
+		frappe.throw(
+			f"The history import stopped for the 4-minute marks {jobs} times and its last "
+			f"{stalls + 1} jobs got no further (at {result.get('phase')}). Its place is kept: "
+			"press Import history to carry on, and send the worker log if it stops here again."
+		)
+	return True
+
+
 def _continue(action, user):
 	"""Queue the same action again as a new job, for a run that stopped on
-	purpose to start afresh (history_inputs). The request was confirmed when
-	the first job was queued; nothing else may have taken the lock since."""
+	purpose (history_inputs, marks.py). The request was confirmed when the
+	first job was queued; nothing else may have taken the lock since."""
 	token = uuid.uuid4().hex
 	if not frappe.cache.set(lock_key(), token, nx=True, ex=21600):
 		return
@@ -401,10 +434,7 @@ def execute(token, action, user):
 				}
 			if action == "reconcile":
 				value["reconciled"] = not result.get("mismatches") and bool(result.get("people_checked"))
-			# Once: a job queued this way that prepares again stops, rather than
-			# queueing itself for ever.
-			again = action in ("history_preview", "history_import") and bool((result or {}).get("prepared")) \
-				and not value.get("continued")
+			again = action in ("history_preview", "history_import") and _carry_on(value, result)
 		value.update({"status": "finished", "result": result, "finished_at": str(now_datetime())})
 	except Exception as exc:
 		frappe.db.rollback()

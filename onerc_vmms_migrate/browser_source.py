@@ -286,6 +286,27 @@ def capture(settings, capture_id):
 		client.close()
 
 
+def verified(path, sha256):
+	"""Whether the file has this sha256. A match is remembered with the file's
+	size and modification time, and the file is hashed again only when either
+	changes: a history import that stands aside for the 4-minute marks opens
+	its 3 GB history store once per job (marks.py)."""
+	from onerc_vmms_migrate.bulk_source import sha256_file
+
+	stat = os.stat(path)
+	stamp = {"sha256": sha256, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+	try:
+		with open(path + ".verified") as handle:
+			if json.load(handle) == stamp:
+				return True
+	except (OSError, ValueError):
+		pass
+	if sha256_file(path) != sha256:
+		return False
+	workspace.write_json(path + ".verified", stamp)
+	return True
+
+
 class SnapshotSource:
 	def __init__(self, conf, data=None):
 		"""`data` is a capture already read (history_inputs): the snapshot file
@@ -301,10 +322,9 @@ class SnapshotSource:
 			self.data = data
 		if self.data.get("history_storage"):
 			from onerc_vmms_migrate.history_store import SQLiteHistory
-			from onerc_vmms_migrate.bulk_source import sha256_file
 			storage = self.data["history_storage"]
 			path = workspace.path("captures", capture_id, "transfer.sqlite")
-			if sha256_file(path) != storage["sqlite_sha256"]:
+			if not verified(path, storage["sqlite_sha256"]):
 				raise SourceError("Captured history failed integrity verification. Resume or recapture it.")
 			self.data["history"] = SQLiteHistory(path, storage["count"])
 		self.db_name = self.data["source"]["db_name"]

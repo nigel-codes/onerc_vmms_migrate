@@ -20,7 +20,7 @@ from frappe.utils import now_datetime
 
 from onerc_vmms_migrate import workspace
 
-VERSION = 1
+VERSION = 2  # 0.10.4: the files keep their place too (files_place)
 FILE = "history-progress.json"
 PHASES = ("archive", "convert", "files", "report")
 
@@ -48,6 +48,7 @@ def begin(kind, capture, key, run_id):
 		"archive": {"index": 0, "start": 0, "totals": {}, "problems": []},
 		"archive_result": None,
 		"loader": None,
+		"files_place": {},
 		"files": None,
 	}
 
@@ -83,8 +84,9 @@ def marker(value):
 	"""What a stretch moved, for the job that checks the run is getting anywhere."""
 	place = value.get("archive") or {}
 	loader = value.get("loader") or {}
+	files = value.get("files_place") or {}
 	return [value.get("phase"), place.get("index"), place.get("start"), loader.get("pages"),
-		len(loader.get("failures") or ())]
+		len(loader.get("failures") or ()), files.get("part"), files.get("offset")]
 
 
 # The loader's part ------------------------------------------------------------

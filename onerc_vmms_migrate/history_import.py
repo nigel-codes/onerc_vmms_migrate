@@ -39,11 +39,12 @@ CONFIRMATION = "HISTORY"
 PAGE = 500
 # Seconds before the next mark a unit of work needs to start (marks.py). The
 # first run of a capture reads all of it and builds the people in one go
-# (about 100 s on the hosted server), so it takes a whole stretch. A later job
+# (about 100 s on the hosted server), so it starts early in a stretch (the
+# panel starts jobs a few seconds after it begins). A later job
 # reads the small inputs and stops at any commit, the files' included (0.10.4:
 # on the hosted server they took longer than a whole stretch). The report is
 # a single unit.
-PREPARE_NEEDS = marks.SPAN
+PREPARE_NEEDS = 150
 STRETCH_NEEDS = 120
 REPORT_NEEDS = 90
 METHODS = ("projects", "terms", "deployments", "events", "applications", "availability", "time_logs", "helpdesk")
@@ -136,9 +137,10 @@ def _run(kind, live, progress):
 
 	conf = workspace.config()
 	capture = conf.get("browser_capture")
-	# Before anything is read, so the waiting job stays as small as its worker.
-	marks.wait(STRETCH_NEEDS if live and history_inputs.exists(capture) else PREPARE_NEEDS,
-		lambda seconds: _report(progress, "waiting for the 4-minute mark", 0, None))
+	if not marks.fits(STRETCH_NEEDS if live and history_inputs.exists(capture) else PREPARE_NEEDS):
+		# Nothing read: the job ends at once and the panel starts the next one
+		# when a stretch begins (browser.status). No job waits across a mark.
+		return {"waiting": True}
 	started = time.monotonic()
 	report = {"kind": kind, "started_at": str(now_datetime()), "capture": capture}
 	_report(progress, "reading the capture", 0, None)

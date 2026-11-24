@@ -29,20 +29,22 @@ class TestMarks(TestCase):
 			utc(2026, 11, 23, 12, 12, 1), utc(2026, 11, 23, 14, 0, 3)]
 		self.assertEqual([stop % marks.PERIOD for stop in stops], [3, 2, 2, 1, 3])
 
-	def test_a_run_waits_for_a_stretch_with_room_for_its_work(self):
+	def test_a_job_runs_only_inside_a_stretch_with_room_for_its_work(self):
 		mark = utc(2026, 11, 24, 9, 0, 0)
-		slept = []
 
-		def wait(since, need):
-			slept.clear()
-			return marks.wait(need, clock=lambda: mark + since, sleep=slept.append)
+		def fits(since, need):
+			return marks.fits(need, clock=lambda: mark + since)
 
-		self.assertEqual(wait(10, 120), 35)  # the mark has just passed: let it settle
-		self.assertEqual(slept, [35])
-		self.assertEqual(wait(60, 120), 0)  # 170 s left
-		self.assertEqual(slept, [])
-		self.assertEqual(wait(150, 120), 135)  # 80 s left: after the next mark
-		self.assertEqual(wait(marks.SETTLE, 10**6), 0)  # nothing gets more than a whole stretch
+		self.assertFalse(fits(10, 120))  # the mark has just passed: let it settle
+		self.assertTrue(fits(50, 150))
+		self.assertTrue(fits(60, 120))  # 170 s left
+		self.assertFalse(fits(150, 120))  # 80 s left
+		self.assertTrue(fits(marks.SETTLE, 10**6))  # nothing gets more than a whole stretch
+
+	def test_the_next_stretch_begins_after_the_coming_mark_settles(self):
+		mark = utc(2026, 11, 24, 9, 0, 0)
+		self.assertEqual(marks.next_start(clock=lambda: mark + 10), mark + marks.SETTLE)
+		self.assertEqual(marks.next_start(clock=lambda: mark + 122), mark + marks.PERIOD + marks.SETTLE)
 
 	def test_a_window_closes_before_the_mark_with_room_for_the_longest_unit(self):
 		mark = utc(2026, 11, 24, 9, 0, 0)
@@ -320,7 +322,7 @@ class TestRunCarriesOn(TestCase):
 		self.calls = {}
 		for name, item in (
 			("config", patch.object(history_import.workspace, "config", return_value={"browser_capture": "c1"})),
-			("wait", patch.object(marks, "wait")),
+			("fits", patch.object(marks, "fits", return_value=True)),
 			("window", patch.object(marks, "Window", side_effect=lambda: Window(100))),
 			("exists", patch.object(history_import.history_inputs, "exists", return_value=True)),
 			("load", patch.object(history_import.history_inputs, "load", return_value=snapshot)),
@@ -386,6 +388,12 @@ class TestRunCarriesOn(TestCase):
 		self.calls["forget"].assert_not_called()
 		self.calls["archive"].assert_called_once()
 
+	def test_outside_a_stretch_the_job_ends_at_once_having_read_nothing(self):
+		self.calls["fits"].return_value = False
+		self.assertEqual(history_import._run("history-import", True, None), {"waiting": True})
+		self.calls["load"].assert_not_called()
+		self.calls["archive"].assert_not_called()
+
 	def test_a_preview_keeps_no_place(self):
 		with patch.object(history_progress, "load", return_value=self.place("report")):
 			history_import._run("history-preview", False, None)
@@ -412,11 +420,12 @@ class TestJobs(TestCase):
 		self.assertFalse(browser._carry_on({}, {"report": "x"}))
 		self.assertFalse(browser._carry_on({}, None))
 
-	def test_a_job_that_stood_aside_queues_the_next(self):
+	def test_a_job_that_stood_aside_ends_and_waits_for_the_next_stretch(self):
+		saved = []
 		with (
 			patch.object(browser, "authorize"),
 			patch.object(browser, "state", return_value={}),
-			patch.object(browser, "save_state"),
+			patch.object(browser, "save_state", side_effect=lambda value: saved.append(dict(value))),
 			patch.object(browser, "_progress_reporter", return_value=None),
 			patch.object(frappe, "set_user"),
 			patch.object(browser.frappe, "cache", MagicMock(get=MagicMock(return_value=b"t1"))),
@@ -424,7 +433,69 @@ class TestJobs(TestCase):
 			patch.object(browser, "_continue") as again,
 		):
 			browser.execute("t1", "history_import", "Administrator")
-		again.assert_called_once_with("history_import", "Administrator")
+		again.assert_not_called()
+		self.assertEqual(saved[-1]["status"], "waiting")
+		self.assertEqual(saved[-1]["progress"]["phase"], "waiting for the 4-minute mark")
+
+	def test_a_job_outside_a_stretch_waits_without_counting_as_a_stall(self):
+		value = {}
+		for _ in range(10):
+			self.assertTrue(browser._carry_on(value, {"waiting": True}))
+		self.assertNotIn("stalls", value)
+
+
+class TestPanelClock(TestCase):
+	"""The open panel queues the next job when a stretch begins, and picks a
+	run up again after the server stopped its job."""
+
+	def setUp(self):
+		self.saved = []
+		self.cache = MagicMock(get=MagicMock(return_value=b"job-1"))
+		for item in (
+			patch.object(browser, "save_state", side_effect=lambda value: self.saved.append(dict(value))),
+			patch.object(browser.frappe, "cache", self.cache),
+			patch.object(history_progress, "load", return_value={"phase": "files", "files_place": {"part": 0, "offset": 50}}),
+		):
+			item.start()
+			self.addCleanup(item.stop)
+
+	def clock(self, value, rq_status="failed"):
+		with (
+			patch.object(browser, "state", return_value=value),
+			patch.object(browser, "_continue") as again,
+			patch("frappe.utils.background_jobs.get_job_status", return_value=rq_status),
+		):
+			browser._history_clock()
+		return again
+
+	def test_the_next_job_is_queued_once_the_stretch_begins(self):
+		waiting = {"action": "history_import", "status": "waiting", "resume_after": 4102444800, "waiting_user": "Administrator"}
+		self.clock(dict(waiting)).assert_not_called()
+		self.clock({**waiting, "resume_after": 1}).assert_called_once_with("history_import", "Administrator")
+
+	def test_a_job_the_server_stopped_is_picked_up_at_the_next_stretch(self):
+		value = {"action": "history_import", "status": "running", "job_id": "job-1", "started_by": "Administrator"}
+		self.clock(value).assert_not_called()
+		self.assertEqual(self.saved[-1]["status"], "waiting")
+		self.assertEqual(self.saved[-1]["server_stops"], 1)
+		self.cache.delete.assert_called_once()
+
+	def test_a_running_job_is_left_alone(self):
+		value = {"action": "history_import", "status": "running", "job_id": "job-1"}
+		self.clock(value, rq_status="started")
+		self.assertEqual(self.saved, [])
+		self.clock({"action": "people_import", "status": "running", "job_id": "job-1"})
+		self.assertEqual(self.saved, [])
+
+	def test_four_stops_at_the_same_place_end_the_run_with_its_place_kept(self):
+		value = {"action": "history_import", "status": "running", "job_id": "job-1", "started_by": "Administrator"}
+		for _ in range(3):
+			self.clock(value)
+			value.update(status="running", job_id="job-1")
+		self.assertEqual(self.saved[-1]["status"], "waiting")
+		self.clock(value)
+		self.assertEqual(self.saved[-1]["status"], "failed")
+		self.assertIn("4 times at the same place", self.saved[-1]["error"])
 
 
 class TestVerified(TestCase):

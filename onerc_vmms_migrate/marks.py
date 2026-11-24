@@ -10,6 +10,11 @@ the largest process at that moment.
 So a live run starts just after a mark, stops at a safe point (a commit)
 before the next one, and a fresh job carries on after it. A SIGTERM between
 safe points stops it at the next one instead of mid-page.
+
+No job lives across a mark, not even a sleeping one (0.10.5: a job that slept
+through one was stopped too). A job that is not inside a stretch ends at once,
+and the open migration panel starts the next one when a stretch begins
+(browser.status).
 """
 
 import signal
@@ -27,20 +32,18 @@ def next_mark(now):
 	return now - now % PERIOD + PERIOD
 
 
-def wait(need, report=None, clock=time.time, sleep=time.sleep):
-	"""Sleep until a stretch with `need` seconds left before the next mark.
-
-	Nothing is read before this, so the waiting job is no bigger than the
-	worker it was forked from. Returns the seconds slept."""
-	need = min(need, SPAN)
+def fits(need, clock=time.time):
+	"""Whether now is inside a stretch with `need` seconds left before the next mark."""
 	since = clock() % PERIOD
-	if since >= SETTLE and PERIOD - CLEAR - since >= need:
-		return 0
-	delay = SETTLE - since if since < SETTLE else PERIOD - since + SETTLE
-	if report:
-		report(delay)
-	sleep(delay)
-	return delay
+	return since >= SETTLE and PERIOD - CLEAR - since >= min(need, SPAN)
+
+
+def next_start(clock=time.time):
+	"""When the next stretch begins: SETTLE seconds after the coming mark, or
+	after the last one while it is still settling."""
+	now = clock()
+	since = now % PERIOD
+	return now - since + (SETTLE if since < SETTLE else PERIOD + SETTLE)
 
 
 class Window:

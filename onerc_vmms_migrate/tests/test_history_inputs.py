@@ -115,7 +115,7 @@ class TestRunReadsTheSmallInputs(TestCase):
 			patch("onerc_vmms_migrate.continuity.require_capture"),
 			patch.object(history_import, "keep_imported_people"),
 			patch("onerc_vmms_migrate.silence.silenced", MagicMock()),
-			patch.object(history_import.marks, "wait"),
+			patch.object(history_import.marks, "fits", return_value=True),
 			patch.object(history_inputs, "exists", return_value=False),
 			patch.object(history_inputs, "key", return_value="k1"),
 			patch.object(history_import.history_progress, "load", return_value=None),
@@ -163,13 +163,15 @@ class TestRunReadsTheSmallInputs(TestCase):
 
 
 class TestStartsAfresh(TestCase):
-	"""A run that saved the small inputs is queued again as a new job."""
+	"""A run that saved the small inputs waits for the next stretch (marks.py),
+	when the migration panel queues it again as a new job."""
 
 	def setUp(self):
+		self.saved = []
 		for item in (
 			patch.object(browser, "authorize"),
 			patch.object(browser, "state", return_value={}),
-			patch.object(browser, "save_state"),
+			patch.object(browser, "save_state", side_effect=lambda value: self.saved.append(dict(value))),
 			patch.object(browser, "_progress_reporter", return_value=None),
 			patch.object(frappe, "set_user"),
 			patch.object(browser.frappe, "cache", MagicMock(get=MagicMock(return_value=b"t1"))),
@@ -177,24 +179,26 @@ class TestStartsAfresh(TestCase):
 			item.start()
 			self.addCleanup(item.stop)
 
-	def test_a_prepared_run_queues_the_same_action_again(self):
+	def test_a_prepared_run_waits_for_the_next_stretch(self):
 		with patch.object(history_import, "apply", return_value={"prepared": True}), patch.object(browser, "_continue") as again:
 			browser.execute("t1", "history_import", "Administrator")
-		again.assert_called_once_with("history_import", "Administrator")
+		again.assert_not_called()  # no job lives across a mark
+		self.assertEqual(self.saved[-1]["status"], "waiting")
+		self.assertEqual(self.saved[-1]["waiting_user"], "Administrator")
+		self.assertGreater(self.saved[-1]["resume_after"], 0)
 
 	def test_a_job_queued_that_way_is_never_queued_again(self):
 		with (
 			patch.object(browser, "state", return_value={"prepared_once": True}),
 			patch.object(history_import, "apply", return_value={"prepared": True}),
-			patch.object(browser, "_continue") as again,
 		):
 			browser.execute("t1", "history_import", "Administrator")
-		again.assert_not_called()
+		self.assertEqual(self.saved[-1]["status"], "finished")
 
 	def test_a_finished_or_failed_run_is_not_queued_again(self):
-		with patch.object(history_import, "apply", return_value={"report": "x"}), patch.object(browser, "_continue") as again:
+		with patch.object(history_import, "apply", return_value={"report": "x"}):
 			browser.execute("t1", "history_import", "Administrator")
-		with patch.object(history_import, "apply", side_effect=RuntimeError("stopped")), patch.object(browser, "_continue") as failed, patch.object(frappe.db, "rollback"):
+		self.assertEqual(self.saved[-1]["status"], "finished")
+		with patch.object(history_import, "apply", side_effect=RuntimeError("stopped")), patch.object(frappe.db, "rollback"):
 			browser.execute("t1", "history_import", "Administrator")
-		again.assert_not_called()
-		failed.assert_not_called()
+		self.assertEqual(self.saved[-1]["status"], "failed")

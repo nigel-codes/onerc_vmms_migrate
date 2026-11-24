@@ -190,16 +190,27 @@ def coverage(snapshot):
     return result
 
 
-def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
-    """Restore bytes and rewrite native attachment fields, preserving ownership."""
+FILES_PAGE=25  # captured files per safe point: each is hashed, then matched or copied
+ROWS_PAGE=200  # records per safe point when their attachment fields are rewritten
+
+
+def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True,place=None,step=None):
+    """Restore bytes and rewrite native attachment fields, preserving ownership.
+
+    With `step` (the history import, 0.10.4) the work stops at safe points:
+    after every FILES_PAGE files and ROWS_PAGE records, and after each part,
+    `step()` commits, keeps `place` and may end the job. A later call with
+    that place carries on after the last safe point, with the counts so far
+    and the files already matched, so the result is the uninterrupted one."""
     if not callable(getattr(source,'verify_file',None)) or not callable(getattr(source,'file_name',None)):
         raise ValueError('The file phase requires a verified Bulk Export capture; direct database file sources are not supported.')
     from onerc_vmms_migrate.bulk_source import sha256_file
     from onerc_vmms_migrate.history_model import History
     source_id=str(snapshot['source'].get('source_id') or snapshot['source']['db_name'])
     manifest=snapshot.get('all_file_manifest',snapshot.get('captured_file_manifest',{}))
-    report={'available':0,'missing':0,'restored':0,'existing':0,'native_fields_updated':0}
-    cache={}
+    place={} if place is None else place
+    report=dict(place.get('report') or {'available':0,'missing':0,'restored':0,'existing':0,'native_fields_updated':0})
+    cache={tuple(entry[:4]):entry[4] for entry in place.get('cache') or ()}
     from onerc_vmms_migrate.file_transfer import required_privacy
     def restore(url,doctype,name,private=None):
         item=manifest.get(url)
@@ -219,15 +230,16 @@ def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
         cache[identity]=new_url
         report['restored']+=1
         return new_url
-    for item in manifest.values() if verify_manifest else ():
+
+    def captured_file(item):
         url=item['source_url']
         path=source.file_path(url)
         if not path:
             report['missing']+=1
-            continue
+            return
         source.verify_file(url,path)
         report['available']+=1
-        if dry_run:continue
+        if dry_run:return
         for reference in item.get('references') or []:
             dt,name=reference.get('attached_to_doctype'),reference.get('attached_to_name')
             record_id=historical.archive_id(source_id,dt,name) if dt and name else None
@@ -245,59 +257,65 @@ def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
             if reference.get('name'):
                 native_file=frappe.db.get_value('File',{'attached_to_doctype':target_dt,'attached_to_name':target_name,'file_url':new_url},'name')
                 if native_file:historical.mark(snapshot,'File',reference['name'],'File',native_file,run_id)
+
     # Embedded Attach fields can have no File.attached_to_* metadata at all.
     # Resolve them from the original schema, so banners, QR images and evidence
     # are restored even when the original upload was recorded as unattached.
     history=History(snapshot)
-    for dt in history.schemas:
-        attachment_fields=[f['fieldname'] for f in history.schemas.get(dt,{}).get('fields',[]) if f['fieldtype'] in ('Attach','Attach Image','Text Editor')]
-        if not attachment_fields:continue
-        for row in history.tables[dt].values():
-            target=frappe.db.get_value(historical.ARCHIVE,{'record_id':historical.archive_id(source_id,dt,row['name']),'conversion_status':'Converted'},['target_doctype','target_name'],as_dict=True)
-            if not target:continue
-            meta=frappe.get_meta(target.target_doctype)
-            for field in attachment_fields:
-                url=row.get(field)
-                if not url or not meta.has_field(field):continue
-                source_field=next(f for f in history.schemas[dt]['fields'] if f['fieldname']==field)
-                if source_field['fieldtype']=='Text Editor':
-                    if dry_run:continue
-                    from onerc_vmms_migrate.html_files import rewrite
-                    current=frappe.db.get_value(target.target_doctype,target.target_name,field) or ''
-                    new_html=rewrite(current,lambda old:restore(old,target.target_doctype,target.target_name))
-                    if new_html!=current:
-                        frappe.db.set_value(target.target_doctype,target.target_name,field,new_html,update_modified=False)
-                        report['native_fields_updated']+=1
-                    continue
-                if url not in manifest or dry_run:continue
-                new_url=restore(url,target.target_doctype,target.target_name)
-                current=frappe.db.get_value(target.target_doctype,target.target_name,field)
-                if new_url and current in (None,'',url):
-                    frappe.db.set_value(target.target_doctype,target.target_name,field,new_url,update_modified=False)
+    def embedded_rows():
+        for dt in history.schemas:
+            attachment_fields=[f['fieldname'] for f in history.schemas.get(dt,{}).get('fields',[]) if f['fieldtype'] in ('Attach','Attach Image','Text Editor')]
+            if not attachment_fields:continue
+            for row in history.tables[dt].values():
+                yield dt,attachment_fields,row
+
+    def embedded(unit):
+        dt,attachment_fields,row=unit
+        target=frappe.db.get_value(historical.ARCHIVE,{'record_id':historical.archive_id(source_id,dt,row['name']),'conversion_status':'Converted'},['target_doctype','target_name'],as_dict=True)
+        if not target:return
+        meta=frappe.get_meta(target.target_doctype)
+        for field in attachment_fields:
+            url=row.get(field)
+            if not url or not meta.has_field(field):continue
+            source_field=next(f for f in history.schemas[dt]['fields'] if f['fieldname']==field)
+            if source_field['fieldtype']=='Text Editor':
+                if dry_run:continue
+                from onerc_vmms_migrate.html_files import rewrite
+                current=frappe.db.get_value(target.target_doctype,target.target_name,field) or ''
+                new_html=rewrite(current,lambda old:restore(old,target.target_doctype,target.target_name))
+                if new_html!=current:
+                    frappe.db.set_value(target.target_doctype,target.target_name,field,new_html,update_modified=False)
                     report['native_fields_updated']+=1
+                continue
+            if url not in manifest or dry_run:continue
+            new_url=restore(url,target.target_doctype,target.target_name)
+            current=frappe.db.get_value(target.target_doctype,target.target_name,field)
+            if new_url and current in (None,'',url):
+                frappe.db.set_value(target.target_doctype,target.target_name,field,new_url,update_modified=False)
+                report['native_fields_updated']+=1
+
     # User is deliberately excluded from generic history; avatars are captured
     # through the safe core user allowlist and still need their native field.
-    if not dry_run:
-        for row in snapshot['users'].values():
-            url=row.get('user_image')
-            if not url or url not in manifest:continue
-            user=historical.converted(snapshot,'User',row['name'])
-            if not user:continue
-            current=frappe.db.get_value('User',user,'user_image')
-            if current not in (None,'',url):continue
-            new_url=restore(url,'User',user,private=False)
-            if new_url:
-                frappe.db.set_value('User',user,'user_image',new_url,update_modified=False)
-                frappe.clear_document_cache('User',user)
-                report['native_fields_updated']+=1
-        frappe.cache.delete_key('user_info')
-    for row in history.rows('Deployment Request Tool'):
+    def avatar(row):
+        url=row.get('user_image')
+        if not url or url not in manifest:return
+        user=historical.converted(snapshot,'User',row['name'])
+        if not user:return
+        current=frappe.db.get_value('User',user,'user_image')
+        if current not in (None,'',url):return
+        new_url=restore(url,'User',user,private=False)
+        if new_url:
+            frappe.db.set_value('User',user,'user_image',new_url,update_modified=False)
+            frappe.clear_document_cache('User',user)
+            report['native_fields_updated']+=1
+
+    def terms_attachment(row):
         url=row.get('tor_attachment')
-        if dry_run or not url or url not in manifest:continue
+        if dry_run or not url or url not in manifest:return
         deployment=historical.converted(snapshot,'Deployment Request Tool',row['name'])
-        if not deployment:continue
+        if not deployment:return
         terms=frappe.db.get_value('VMMS Deployment',deployment,'terms_of_reference')
-        if not terms or not frappe.db.get_value('VMMS Terms of Reference',terms,'legacy_unstructured_terms'):continue
+        if not terms or not frappe.db.get_value('VMMS Terms of Reference',terms,'legacy_unstructured_terms'):return
         new_url=restore(url,'VMMS Terms of Reference',terms,True)
         if new_url:
             fields=['legacy_terms_attachment']+(['tor_attachment'] if frappe.get_meta('VMMS Terms of Reference').has_field('tor_attachment') else [])
@@ -306,6 +324,29 @@ def attachments(snapshot,source,run_id,dry_run=True,verify_manifest=True):
             if values:
                 frappe.db.set_value('VMMS Terms of Reference',terms,values,update_modified=False)
                 report['native_fields_updated']+=1
+
+    def safe_point(part,offset):
+        if step is None:return
+        place.update(part=part,offset=offset,report=dict(report),cache=[[*key,value] for key,value in cache.items()])
+        step()
+
+    parts=(
+        (lambda:list(manifest.values()) if verify_manifest else [],FILES_PAGE,captured_file),
+        (lambda:list(embedded_rows()),ROWS_PAGE,embedded),
+        (lambda:[] if dry_run else list(snapshot['users'].values()),ROWS_PAGE,avatar),
+        (lambda:history.rows('Deployment Request Tool'),ROWS_PAGE,terms_attachment),
+    )
+    reached,offset=place.get('part',0),place.get('offset',0)
+    for index,(units,size,work) in enumerate(parts):
+        if index<reached:continue  # done by an earlier job of this run
+        units=units()
+        for position in range(offset if index==reached else 0,len(units)):
+            work(units[position])
+            if (position+1)%size==0 and position+1<len(units):
+                safe_point(index,position+1)
+        if index==2 and not dry_run:
+            frappe.cache.delete_key('user_info')
+        safe_point(index+1,0)
     return report
 
 

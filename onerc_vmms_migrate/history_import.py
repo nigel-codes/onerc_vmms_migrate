@@ -40,11 +40,11 @@ PAGE = 500
 # Seconds before the next mark a unit of work needs to start (marks.py). The
 # first run of a capture reads all of it and builds the people in one go
 # (about 100 s on the hosted server), so it takes a whole stretch. A later job
-# reads the small inputs and stops at any commit. The files and the report
-# are single units.
+# reads the small inputs and stops at any commit, the files' included (0.10.4:
+# on the hosted server they took longer than a whole stretch). The report is
+# a single unit.
 PREPARE_NEEDS = marks.SPAN
 STRETCH_NEEDS = 120
-FILES_NEEDS = 120
 REPORT_NEEDS = 90
 METHODS = ("projects", "terms", "deployments", "events", "applications", "availability", "time_logs", "helpdesk")
 # Source doctypes the adapters convert. Child tables of these come along in the archive.
@@ -181,18 +181,18 @@ def _run(kind, live, progress):
 				if reached <= 1:
 					broken = convert(loader, snapshot, live, commit, progress, steps, broken, pages)
 				report["phase_errors"] = broken
-			_release(loader)
-			if reached <= 2:
-				if steps:
-					steps.check(FILES_NEEDS)
-				_report(progress, "files", 0, None)
-				report["files"] = files(snapshot, source, run_id, live)
-				commit()
-				guard.check()
-				if steps:
-					steps.keep(phase="report", files=report["files"])
-			else:
-				report["files"] = steps.place["files"]
+				_release(loader)
+				if reached <= 2:
+					if steps:
+						steps.check()
+					_report(progress, "files", 0, None)
+					report["files"] = files(snapshot, source, run_id, live, steps, commit, progress)
+					commit()
+					guard.check()
+					if steps:
+						steps.keep(phase="report", files=report["files"])
+				else:
+					report["files"] = steps.place["files"]
 			if steps:
 				steps.check(REPORT_NEEDS)
 		except StepAside:
@@ -391,10 +391,13 @@ def convert(loader, snapshot, live, commit, progress, steps=None, broken=None, p
 # 3. Files -------------------------------------------------------------------
 
 
-def files(snapshot, source, run_id, live):
+def files(snapshot, source, run_id, live, steps=None, commit=None, progress=None):
 	"""Attachments of the converted records, and nothing of the people's:
 	references to other doctypes, applicants' included (the people session
-	placed those on profiles), are dropped before the copy."""
+	placed those on profiles), are dropped before the copy.
+
+	A live run commits and keeps its place every few files (full_run.FILES_PAGE)
+	and stops there for a mark; the next job carries on from that file."""
 	from onerc_vmms_migrate import full_run
 	from onerc_vmms_migrate.history_model import History
 
@@ -416,8 +419,19 @@ def files(snapshot, source, run_id, live):
 		for row in helpdesk_load.scoped_rows(history, dt):
 			rows[f"{dt}\0{row['name']}"] = {"doctype": dt, "record": row}
 	part = {**snapshot, "history": rows, "users": {}, "all_file_manifest": manifest}
+	place = step = None
+	if steps:
+		place = steps.place.setdefault("files_place", {})
+
+		def step():
+			commit()
+			steps.keep()
+			_report(progress, "files", place.get("offset", 0), len(manifest) if not place.get("part") else None)
+			steps.check()
+
 	with helpdesk_load.quiet_attachment_comments():
-		result = full_run.attachments(part, source, run_id, dry_run=not live, verify_manifest=True)
+		result = full_run.attachments(part, source, run_id, dry_run=not live, verify_manifest=True,
+			place=place, step=step)
 	result["files_considered"] = len(manifest)
 	return result
 

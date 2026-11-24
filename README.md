@@ -1,4 +1,4 @@
-# VMMS migration receiver — 0.10.3
+# VMMS migration receiver — 0.10.4
 
 Project mapping, dynamic numbering and exact volunteer participation-link checks
 are described in [Project preparation](docs/project-mapping-2026-11-15.md).

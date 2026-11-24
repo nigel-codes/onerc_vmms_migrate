@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import frappe
 
-from onerc_vmms_migrate import browser, browser_source, bulk_source, history_import, history_progress, marks
+from onerc_vmms_migrate import browser, browser_source, bulk_source, full_run, history_import, history_progress, marks
 from onerc_vmms_migrate.history_load import BatchBoundary
 
 
@@ -269,6 +269,45 @@ class TestConvertCarriesOn(TestCase):
 		self.assertNotIn("terms", second.calls)  # broken on the first job's page, not retried
 		self.assertEqual(place["phase"], "files")
 		self.assertEqual(place["loader"]["pages"], 3)
+
+
+class TestFilesCarryOn(TestCase):
+	"""On the hosted server the files alone outlasted a stretch (0.10.4)."""
+
+	def run_files(self, place, stops_after):
+		source = MagicMock()
+		source.file_path.side_effect = lambda url: None if url.endswith("9") else "/captured" + url
+		seen = []
+		source.verify_file.side_effect = lambda url, path: seen.append(url)
+		manifest = {f"/files/f{i}": {"source_url": f"/files/f{i}", "status": "ready", "references": []} for i in range(60)}
+		snapshot = {"source": {"source_id": "s"}, "users": {}, "history": {}, "schemas": {}, "all_file_manifest": manifest}
+		steps = []
+
+		def step():
+			steps.append(dict(place))
+			if len(steps) > stops_after:
+				raise history_import.StepAside
+
+		with patch.object(frappe, "cache", MagicMock()):
+			try:
+				report = full_run.attachments(snapshot, source, "run", dry_run=False, place=place,
+					step=None if place is None else step)
+			except history_import.StepAside:
+				report = None
+		return report, seen, steps
+
+	def test_the_next_job_carries_on_from_the_last_safe_point_with_the_same_counts(self):
+		whole, expected, _ = self.run_files(None, 0)
+		self.assertEqual((whole["available"], whole["missing"]), (54, 6))
+
+		place = {}
+		first, seen, steps = self.run_files(place, 0)
+		self.assertIsNone(first)
+		self.assertEqual((place["part"], place["offset"]), (0, full_run.FILES_PAGE))
+		self.assertEqual(len(steps), 1)
+		last, more, _ = self.run_files(place, 100)
+		self.assertEqual(seen + more, expected)  # every file once, in the same order
+		self.assertEqual(last, whole)
 
 
 class TestRunCarriesOn(TestCase):

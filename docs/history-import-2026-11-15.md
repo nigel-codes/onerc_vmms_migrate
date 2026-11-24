@@ -130,6 +130,12 @@ row Excluded in the archive, and later runs do not attempt those rows again.
    times without getting further stops with its place kept; Import history
    carries it on. The 3 GB history store is hashed once and then only again
    when it changes (`transfer.sqlite.verified`).
+
+   Since 0.10.4 the files stop at safe points too: on Frappe Cloud copying the
+   history's attachments took longer than a whole stretch, so the files step
+   commits and keeps its place every 25 files (and every 200 records whose
+   attachment fields it rewrites), with its counts and the files it already
+   matched, and the next job carries on from there.
 5. Fix the causes in `history-not-imported.csv`, then run Import history again.
    Only what is left is attempted.
 

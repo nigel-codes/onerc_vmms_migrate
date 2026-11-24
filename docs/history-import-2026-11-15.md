@@ -114,6 +114,22 @@ row Excluded in the archive, and later runs do not attempt those rows again.
    at the most instead of 1.1 GB, with the same reports. A change to the
    capture, the settings, the crosswalks, the code or the people ledger works
    it out again.
+
+   Since 0.10.3 an Import keeps out of the way of the server's 4-minute marks.
+   On Frappe Cloud a memory guard stops the largest process on the server when
+   memory runs short, and a shared server runs short when every site's
+   scheduled jobs start together, at each 4-minute mark (Frappe's "All"
+   frequency). Every stopped job had died one to three seconds after one, on
+   any plan. So a job starts 45 seconds after a mark and stops at a commit
+   before the next one; a new job carries on 45 seconds after that mark from
+   the place the run kept (`history-progress.json`: the phase, the place in
+   the archive, the report's lists and totals). The pages are the ones an
+   uninterrupted run takes and the report is that run's report, written once
+   at the end; its `jobs` says how many jobs it took. The panel shows
+   "waiting for the 4-minute mark" between them. A run that stands aside four
+   times without getting further stops with its place kept; Import history
+   carries it on. The 3 GB history store is hashed once and then only again
+   when it changes (`transfer.sqlite.verified`).
 5. Fix the causes in `history-not-imported.csv`, then run Import history again.
    Only what is left is attempted.
 

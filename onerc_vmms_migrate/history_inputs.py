@@ -46,6 +46,11 @@ def path(capture):
 	return workspace.path("captures", capture, FILE)
 
 
+def exists(capture):
+	"""Whether this capture's small inputs were written (perhaps for other inputs)."""
+	return bool(capture) and os.path.isfile(path(capture))
+
+
 def usable(snapshot):
 	"""Only a bulk capture keeps its history outside the snapshot; an older one
 	carries it inline and is read whole every time."""

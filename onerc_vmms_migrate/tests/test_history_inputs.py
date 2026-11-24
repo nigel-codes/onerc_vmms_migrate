@@ -115,6 +115,11 @@ class TestRunReadsTheSmallInputs(TestCase):
 			patch("onerc_vmms_migrate.continuity.require_capture"),
 			patch.object(history_import, "keep_imported_people"),
 			patch("onerc_vmms_migrate.silence.silenced", MagicMock()),
+			patch.object(history_import.marks, "wait"),
+			patch.object(history_inputs, "exists", return_value=False),
+			patch.object(history_inputs, "key", return_value="k1"),
+			patch.object(history_import.history_progress, "load", return_value=None),
+			patch.object(history_import.history_progress, "save"),
 		):
 			item.start()
 			self.addCleanup(item.stop)
@@ -179,7 +184,7 @@ class TestStartsAfresh(TestCase):
 
 	def test_a_job_queued_that_way_is_never_queued_again(self):
 		with (
-			patch.object(browser, "state", return_value={"continued": True}),
+			patch.object(browser, "state", return_value={"prepared_once": True}),
 			patch.object(history_import, "apply", return_value={"prepared": True}),
 			patch.object(browser, "_continue") as again,
 		):

@@ -4,12 +4,13 @@ import csv
 import hashlib
 import json
 import os
+import time
 import uuid
 
 import frappe
 from frappe.utils import now_datetime
 
-from onerc_vmms_migrate import crosswalk, normalise, workspace
+from onerc_vmms_migrate import crosswalk, marks, normalise, workspace
 
 SETTINGS = "VMMS Migration Settings"
 ACTIONS = {
@@ -112,6 +113,7 @@ def fingerprint(include_code=True):
 @frappe.whitelist()
 def status() -> dict:
 	authorize()
+	_history_clock()
 	value = state()
 	value["busy"] = bool(frappe.cache.get(lock_key()))
 	from onerc_vmms_migrate.batches import checkpoint, public_state
@@ -214,7 +216,8 @@ def start(
 		)
 		value.pop("progress", None)
 		value.pop("progress_updated_at", None)
-		for item in ("continued", "prepared_once", "jobs", "stalls", "last_marker"):
+		for item in ("continued", "prepared_once", "jobs", "stalls", "last_marker", "resume_after",
+			"waiting_user", "server_stops", "stop_marker"):
 			value.pop(item, None)
 		if action != "capture":
 			value.pop("transfer", None)
@@ -240,18 +243,23 @@ def _enqueue(token, action, user):
 	)
 
 
+HISTORY_ACTIONS = ("history_preview", "history_import")
 HISTORY_JOBS = 400  # about a day of 4-minute stretches
 HISTORY_STALLS = 3
+WAITING = {"phase": "waiting for the 4-minute mark", "processed": 0, "total": None}
 
 
 def _carry_on(value, result):
-	"""Whether a history job's result asks for a new job: it saved the small
-	inputs (history_inputs), or it stood aside for a mark (marks.py).
+	"""Whether a history job's result asks for a new job: it was not inside a
+	stretch, it saved the small inputs (history_inputs), or it stood aside
+	for a mark (marks.py).
 
 	Once only after saving the inputs: a job queued that way that prepares
 	again stops, rather than queueing itself for ever. A run that stands
 	aside three times without getting any further stops with its place kept."""
 	result = result or {}
+	if result.get("waiting"):
+		return True
 	if result.get("prepared"):
 		if value.get("prepared_once"):
 			return False
@@ -270,6 +278,51 @@ def _carry_on(value, result):
 			"press Import history to carry on, and send the worker log if it stops here again."
 		)
 	return True
+
+
+def _wait_for_stretch(value, user):
+	"""The run carries on when the next stretch begins; until then no job of it exists."""
+	value.update({"status": "waiting", "resume_after": marks.next_start(), "waiting_user": user,
+		"progress": dict(WAITING), "progress_updated_at": str(now_datetime())})
+
+
+def _history_clock():
+	"""The clock of a history import (marks.py), run by the open migration
+	panel every few seconds: it queues the next job when a stretch begins,
+	and treats a job the server stopped as one that stood aside, so the next
+	job carries on from the run's kept place. Four stops in a row at the same
+	place end the run with its place kept."""
+	value = state()
+	if value.get("action") not in HISTORY_ACTIONS:
+		return
+	if value.get("status") == "waiting":
+		if time.time() >= float(value.get("resume_after") or 0):
+			_continue(value["action"], value.get("waiting_user") or value.get("started_by"))
+		return
+	if value.get("status") not in ("queued", "running") or not value.get("job_id"):
+		return
+	token = frappe.cache.get(lock_key())
+	if token != value["job_id"].encode():
+		return
+	from frappe.utils.background_jobs import get_job_status
+
+	if get_job_status(value["job_id"]) not in ("failed", "stopped", "canceled"):
+		return
+	from onerc_vmms_migrate import history_progress
+
+	place = history_progress.load()
+	marker = history_progress.marker(place) if place else None
+	stops = int(value.get("server_stops") or 0) + 1 if marker == value.get("stop_marker") else 1
+	if frappe.cache.get(lock_key()) == token:
+		frappe.cache.delete(lock_key())
+	value.update({"server_stops": stops, "stop_marker": marker, "result": None, "error": None})
+	if stops > HISTORY_STALLS:
+		value.update({"status": "failed", "finished_at": str(now_datetime()), "error": (
+			f"The server stopped the history import {stops} times at the same place. Its place is "
+			"kept: press Import history to carry on, and send the worker log if it stops there again.")})
+	else:
+		_wait_for_stretch(value, value.get("started_by"))
+	save_state(value)
 
 
 def _continue(action, user):
@@ -434,8 +487,10 @@ def execute(token, action, user):
 				}
 			if action == "reconcile":
 				value["reconciled"] = not result.get("mismatches") and bool(result.get("people_checked"))
-			again = action in ("history_preview", "history_import") and _carry_on(value, result)
+			again = action in HISTORY_ACTIONS and _carry_on(value, result)
 		value.update({"status": "finished", "result": result, "finished_at": str(now_datetime())})
+		if again:
+			_wait_for_stretch(value, user)
 	except Exception as exc:
 		frappe.db.rollback()
 		# Never include request headers, source response bodies or password fields in browser errors.
@@ -457,8 +512,6 @@ def execute(token, action, user):
 		save_state(value)
 		if frappe.cache.get(lock_key()) == token.encode():
 			frappe.cache.delete(lock_key())
-	if again:
-		_continue(action, user)
 
 
 @frappe.whitelist(methods=["POST"])

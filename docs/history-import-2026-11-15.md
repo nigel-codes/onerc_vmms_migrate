@@ -136,6 +136,17 @@ row Excluded in the archive, and later runs do not attempt those rows again.
    commits and keeps its place every 25 files (and every 200 records whose
    attachment fields it rewrites), with its counts and the files it already
    matched, and the next job carries on from there.
+
+   Since 0.10.5 no job is alive across a mark, not even a sleeping one: on
+   Frappe Cloud a job that slept through a mark was stopped too. A job that
+   stands aside, prepares, or starts outside a stretch ends at once and the
+   run shows "waiting"; the open migration panel (which asks for the status
+   every 4 seconds) queues the next job when the next stretch begins. When the
+   server stops a job anyway, the panel sees it and the run waits for the next
+   stretch, carrying on from its place; four stops in a row at the same place
+   end it with an error and the place kept. **Keep the Migration Settings page
+   open while the history imports.** Closed, the run pauses; opened again, it
+   carries on.
 5. Fix the causes in `history-not-imported.csv`, then run Import history again.
    Only what is left is attempted.
 

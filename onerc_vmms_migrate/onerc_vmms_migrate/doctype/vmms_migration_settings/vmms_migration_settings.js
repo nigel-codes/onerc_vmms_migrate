@@ -258,10 +258,13 @@ async function migration_status(frm) {
  if (cur_frm !== frm) return;
  const escape = value => frappe.utils.escape_html(String(value ?? ''));
  let html = `<h4>${__('Migration progress')}</h4><p>${escape(state.action || 'No job started')} · ${escape(state.status || 'Ready')}</p>`;
- if (state.busy) html += '<p>Queued or running. You can leave this page and return. If it stays queued, ask hosting support to check the long background worker.</p>';
+ const waiting = state.status === 'waiting';
+ if (waiting) html += '<p>Waiting for the next 4-minute mark. Keep this page open: it starts the next part of the history import by itself. If you close it, the import pauses and carries on when you open it again.</p>';
+ else if (state.busy && ['history_import', 'history_preview'].includes(state.action)) html += '<p>Running. Keep this page open: the history import runs in parts between the server\'s 4-minute marks, and this page starts each part.</p>';
+ else if (state.busy) html += '<p>Queued or running. You can leave this page and return. If it stays queued, ask hosting support to check the long background worker.</p>';
  const progress = state.progress || state.transfer;
- if (progress && state.busy) html += `<pre>${escape(JSON.stringify(progress, null, 2))}</pre>`;
- if (state.progress_updated_at && state.busy) html += `<p>${__('Last progress update')}: ${escape(state.progress_updated_at)}</p>`;
+ if (progress && (state.busy || waiting)) html += `<pre>${escape(JSON.stringify(progress, null, 2))}</pre>`;
+ if (state.progress_updated_at && (state.busy || waiting)) html += `<p>${__('Last progress update')}: ${escape(state.progress_updated_at)}</p>`;
  if (state.pending_bulk_capture && !state.busy) html += '<p>A bulk transfer can be resumed using Capture / resume old site.</p>';
  if (state.result?.complete === false) html += '<div class="alert alert-warning">The source snapshot has missing attachments. Review the missing-files report before importing.</div>';
  if (state.error) html += `<div class="alert alert-danger">${escape(state.error)}</div>`;
@@ -302,7 +305,7 @@ async function migration_status(frm) {
   html += '</ul>';
  }
  frm.get_field('migration_dashboard').$wrapper.html(html);
- if (state.busy || state.batch?.status === 'ready' || state.attachment_batch?.status === 'ready' || state.date_repair?.status === 'ready') frm._migration_timer = setTimeout(() => {
+ if (state.busy || waiting || state.batch?.status === 'ready' || state.attachment_batch?.status === 'ready' || state.date_repair?.status === 'ready') frm._migration_timer = setTimeout(() => {
   if (cur_frm === frm) migration_status(frm);
  }, 4000);
  else if (state.action === 'capture' && state.status === 'finished' && state.result?.capture_id !== frm.doc.browser_capture) frm.reload_doc();
